@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Number Blocks</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#000; overflow:hidden; touch-action:none; }
+  canvas { display:block; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// ─── roundRect polyfill ───────────────────────────────────────────────────────
+if (!CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect = function(x,y,w,h,r){
+    if(typeof r==='number') r=[r,r,r,r];
+    else if(r.length===1) r=[r[0],r[0],r[0],r[0]];
+    else if(r.length===2) r=[r[0],r[1],r[0],r[1]];
+    else if(r.length===3) r=[r[0],r[1],r[2],r[1]];
+    this.moveTo(x+r[0],y);
+    this.lineTo(x+w-r[1],y); this.arcTo(x+w,y,x+w,y+r[1],r[1]);
+    this.lineTo(x+w,y+h-r[2]); this.arcTo(x+w,y+h,x+w-r[2],y+h,r[2]);
+    this.lineTo(x+r[3],y+h); this.arcTo(x,y+h,x,y+h-r[3],r[3]);
+    this.lineTo(x,y+r[0]); this.arcTo(x,y,x+r[0],y,r[0]);
+    this.closePath();
+    return this;
+  };
+}
+
+// ─── Canvas setup ─────────────────────────────────────────────────────────────
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let sw = 0, sh = 0;
+
+function resize(){
+  sw = canvas.width  = window.innerWidth;
+  sh = canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+const BS        = 22;
+const GRAVITY   = 0.4;
+const FRICTION  = 0.92;
+const GH        = 50;
+const PAD_H     = 115;
+const SMALL_PAD_H = 50;
+
+const COLORS = {
+  1:[222,21,29], 2:[232,146,35], 3:[230,196,12], 4:[56,181,0],
+  5:[35,176,219], 6:[90,53,195], 7:[186,121,221], 8:[255,0,100],
+  9:[180,180,180], 10:[255,255,255], 20:[255,228,181], 30:[255,255,200],
+  40:[144,238,144], 50:[175,238,238], 60:[150,100,200], 80:[255,150,200],
+  90:[180,180,180]
+};
+const RAINBOW = [[222,21,29],[232,146,35],[230,196,12],[56,181,0],[35,176,219],[90,53,195],[186,121,221]];
+const PASTEL_RAINBOW = [[255,180,180],[255,220,180],[255,255,180],[180,255,180],[180,255,255],[180,180,255],[220,180,255]];
+
+function rgb(arr){ return `rgb(${arr[0]},${arr[1]},${arr[2]})`; }
+function rgba(arr,a){ return `rgba(${arr[0]},${arr[1]},${arr[2]},${a})`; }
+
+// ─── Mode state ───────────────────────────────────────────────────────────────
+let mode = 'ADD'; // 'ADD' | 'MUL' | 'WALK'
+
+// ─── NumberBlock class ────────────────────────────────────────────────────────
+let blockIdCounter = 0;
+class NumberBlock {
+  constructor(num, x, y){
+    this.id    = blockIdCounter++;
+    this.num   = Math.max(1, Math.min(100, num));
+    this.x     = x;
+    this.y     = y;
+    this.vx    = 0;
+    this.vy    = 0;
+    this.onGround = false;
+    this.walkAngle = Math.random()*Math.PI*2;
+    this.walkSpeed = 0.6 + Math.random()*0.8;
+    this.walkDir   = Math.random()<0.5?-1:1;
+    this._computeShape();
+  }
+  _computeShape(){
+    const n = this.num;
+    if(n===100){ this.cols=10; this.rows=10; }
+    else if(n===90){ this.cols=9; this.rows=10; }
+    else if([4,9,16,25,36,49,64,81].includes(n)){
+      const s=Math.round(Math.sqrt(n)); this.cols=s; this.rows=s;
+    }
+    else if(n>=31&&n<=99){ this.cols=Math.ceil(n/10); this.rows=10; }
+    else if(n===30){ this.cols=3; this.rows=10; }
+    else if(n>=21&&n<=29){ this.cols=3; this.rows=10; }
+    else if(n===20){ this.cols=2; this.rows=10; }
+    else if(n>=11&&n<=19){ this.cols=2; this.rows=10; }
+    else { this.cols=1; this.rows=n; }
+    this.width  = this.cols * BS;
+    this.height = this.rows * BS;
+  }
+  get cx(){ return this.x + this.width/2; }
+  get cy(){ return this.y + this.height/2; }
+
+  _blockPos(i){
+    const n=this.num, cols=this.cols, rows=this.rows;
+    let ix,iy;
+    if(n===100||[4,9,16,25,36,49,64,81].includes(n)){
+      ix=i%cols; iy=rows-1-Math.floor(i/cols);
+    } else if(n===90||n%10===0){
+      ix=Math.floor(i/10); iy=9-(i%10);
+    } else if(n===30){
+      ix=Math.floor(i/10); iy=9-(i%10);
+    } else if(n>=21&&n<=29){
+      if(i<20){ ix=Math.floor(i/10); iy=9-(i%10); }
+      else { ix=2; iy=9-(i-20); }
+    } else if(n===20){
+      ix=i%2; iy=9-Math.floor(i/2);
+    } else if(n>=11&&n<=19){
+      if(i<10){ ix=0; iy=9-i; }
+      else { ix=1; iy=9-(i-10); }
+    } else {
+      ix=0; iy=rows-1-i;
+    }
+    return {ix,iy};
+  }
+
+  _blockColor(i){
+    const n=this.num;
+    if(n===100){
+      return (Math.floor(i/10)+i%10)%2===0?[255,180,180]:[255,50,50];
+    }
+    const {ix} = this._blockPos(i);
+    // 70s pastel rainbow
+    if(n>=71&&n<=79&&i<70){
+      return PASTEL_RAINBOW[ix%7];
+    }
+    // n%10===7 ones digit
+    if(n%10===7&&n!==7&&i>=Math.floor(n/10)*10){
+      return RAINBOW[(i-Math.floor(n/10)*10)%7];
+    }
+    if(n===7) return RAINBOW[i%7];
+    // tens blocks
+    const tens = Math.floor(n/10)*10;
+    if(i < tens && tens>0 && COLORS[tens]){
+      return COLORS[tens];
+    }
+    // ones
+    const ones = n%10;
+    return COLORS[ones]||[150,150,150];
+  }
+
+  draw(ctx, t=0){
+    const n=this.num;
+    const x=this.x, y=this.y;
+
+    // limbs
+    this._drawLimbs(ctx, t);
+
+    // blocks
+    for(let i=0;i<n;i++){
+      const {ix,iy}=this._blockPos(i);
+      const bx=x+ix*BS, by=y+iy*BS;
+      const col=this._blockColor(i);
+      ctx.fillStyle=rgb(col);
+      ctx.beginPath();
+      ctx.roundRect(bx+1,by+1,BS-2,BS-2,3);
+      ctx.fill();
+      // grid lines for 10s / 20s
+      const tens=Math.floor(n/10)*10;
+      if(tens>0&&i===tens-1){
+        ctx.strokeStyle=n>=20?'rgba(255,100,0,0.5)':'rgba(255,0,0,0.5)';
+        ctx.lineWidth=1.5;
+        ctx.beginPath();
+        ctx.moveTo(bx,by); ctx.lineTo(bx+BS,by);
+        ctx.stroke();
+      }
+      // border
+      ctx.strokeStyle='rgba(0,0,0,0.25)';
+      ctx.lineWidth=0.5;
+      ctx.beginPath();
+      ctx.roundRect(bx+1,by+1,BS-2,BS-2,3);
+      ctx.stroke();
+    }
+
+    // face
+    this._drawFace(ctx);
+
+    // label
+    ctx.save();
+    ctx.textAlign='center';
+    ctx.textBaseline='bottom';
+    ctx.font='bold 13px sans-serif';
+    ctx.strokeStyle='white';
+    ctx.lineWidth=3;
+    ctx.strokeText(String(n), x+this.width/2, y-4);
+    ctx.fillStyle='#ff69b4';
+    ctx.fillText(String(n), x+this.width/2, y-4);
+    ctx.restore();
+  }
+
+  _drawLimbs(ctx, t){
+    const n=this.num;
+    const x=this.x, y=this.y, w=this.width, h=this.height;
+    const legSwing = Math.sin(t*0.05)*15;
+    ctx.strokeStyle='rgba(80,40,0,0.8)';
+    ctx.lineWidth=3;
+    ctx.lineCap='round';
+    // left leg
+    ctx.beginPath();
+    ctx.moveTo(x+w*0.3, y+h);
+    ctx.lineTo(x+w*0.3+legSwing, y+h+14);
+    ctx.stroke();
+    // right leg
+    ctx.beginPath();
+    ctx.moveTo(x+w*0.7, y+h);
+    ctx.lineTo(x+w*0.7-legSwing, y+h+14);
+    ctx.stroke();
+    // arms (at 70% height from top)
+    const armY = y+h*0.3;
+    const armSwing = Math.sin(t*0.05+Math.PI)*12;
+    // left arm
+    ctx.beginPath();
+    ctx.moveTo(x, armY);
+    ctx.lineTo(x-12, armY+armSwing);
+    ctx.stroke();
+    // right arm
+    ctx.beginPath();
+    ctx.moveTo(x+w, armY);
+    ctx.lineTo(x+w+12, armY-armSwing);
+    ctx.stroke();
+  }
+
+  _drawFace(ctx){
+    const n=this.num;
+    const x=this.x, y=this.y, w=this.width, h=this.height;
+    const fx = (n>=20&&n!==100)? x+BS : x+w/2;
+    const fy = y + (n===1?h*0.5:h*0.25);
+
+    ctx.fillStyle='white';
+    ctx.strokeStyle='black';
+    ctx.lineWidth=1;
+
+    if(n===1){
+      ctx.beginPath();
+      ctx.arc(fx, fy, 6, 0, Math.PI*2);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle='black';
+      ctx.beginPath();
+      ctx.arc(fx, fy, 2.5, 0, Math.PI*2);
+      ctx.fill();
+    } else if(n===20){
+      ctx.strokeStyle='purple';
+      ctx.lineWidth=1.5;
+      const ex1=x+BS*0.5, ex2=x+BS*1.5, ey=y+h*0.25;
+      ctx.beginPath();
+      ctx.moveTo(ex1,ey); ctx.lineTo(ex2,ey);
+      ctx.stroke();
+      for(const ex of [ex1,ex2]){
+        ctx.beginPath();
+        ctx.arc(ex,ey,4,0,Math.PI*2);
+        ctx.fillStyle='white'; ctx.fill();
+        ctx.strokeStyle='purple'; ctx.stroke();
+        ctx.fillStyle='black';
+        ctx.beginPath();
+        ctx.arc(ex,ey,1.5,0,Math.PI*2);
+        ctx.fill();
+      }
+    } else {
+      for(const dx of [-6,6]){
+        ctx.beginPath();
+        ctx.arc(fx+dx, fy, 3.5, 0, Math.PI*2);
+        ctx.fillStyle='white'; ctx.fill();
+        ctx.strokeStyle='black'; ctx.stroke();
+        ctx.fillStyle='black';
+        ctx.beginPath();
+        ctx.arc(fx+dx+0.5, fy+0.5, 1.5, 0, Math.PI*2);
+        ctx.fill();
+      }
+    }
+  }
+}
+
+// ─── OpItem class (WALK mode) ─────────────────────────────────────────────────
+const OPS = ['+','-','×','÷','+','-','×','÷'];
+class OpItem {
+  constructor(sw, sh){
+    this.op = OPS[Math.floor(Math.random()*OPS.length)];
+    this.x  = 60+Math.random()*(sw-120);
+    this.y  = 80+Math.random()*(sh-GH-SMALL_PAD_H-150);
+    this.vx = (Math.random()-0.5)*2;
+    this.vy = (Math.random()-0.5)*2;
+    this.r  = 18;
+  }
+  update(sw, sh){
+    this.x+=this.vx; this.y+=this.vy;
+    if(this.x<this.r||this.x>sw-this.r) this.vx*=-1;
+    if(this.y<60+this.r||this.y>sh-GH-SMALL_PAD_H-this.r) this.vy*=-1;
+  }
+  draw(ctx){
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(this.x,this.y,this.r,0,Math.PI*2);
+    ctx.fillStyle='rgba(255,255,200,0.9)';
+    ctx.fill();
+    ctx.strokeStyle='#888';
+    ctx.lineWidth=1.5;
+    ctx.stroke();
+    ctx.fillStyle='#333';
+    ctx.font='bold 16px sans-serif';
+    ctx.textAlign='center';
+    ctx.textBaseline='middle';
+    ctx.fillText(this.op,this.x,this.y);
+    ctx.restore();
+  }
+}
+
+// ─── Battle class ─────────────────────────────────────────────────────────────
+class Battle {
+  constructor(block, opItem, sw, sh){
+    this.block  = block;
+    this.opItem = opItem;
+    this.sw = sw; this.sh = sh;
+    this.op = opItem.op;
+    this.n1 = block.num;
+    this.phase = 'countdown'; // 'countdown' | 'reveal' | 'done'
+    this.timer  = 0;
+    this.COUNTDOWN = 7000;
+    this.REVEAL    = 3000;
+    this._setup();
+  }
+  _setup(){
+    let n1=this.n1, n2, ans;
+    const op=this.op;
+    if(op==='+'){
+      if(n1>=100){ this.op='-'; return this._setup(); }
+      n2=1+Math.floor(Math.random()*(100-n1));
+      ans=n1+n2;
+    } else if(op==='-'){
+      if(n1<=1){ n1=2; }
+      n2=1+Math.floor(Math.random()*(n1-1));
+      ans=n1-n2;
+    } else if(op==='×'){
+      const max_n2=Math.floor(100/n1);
+      if(max_n2<2){
+        n1=[2,3,4,5,6,7,8,9,10][Math.floor(Math.random()*9)];
+      }
+      const mn2=Math.floor(100/n1);
+      n2=2+Math.floor(Math.random()*(mn2-1));
+      ans=n1*n2;
+    } else { // ÷
+      // find divisors of n1 excluding 1 and n1
+      let divs=[];
+      for(let d=2;d<n1;d++) if(n1%d===0) divs.push(d);
+      if(divs.length===0){
+        const safe=[4,6,8,9,10,12,16,20,24,25];
+        n1=safe[Math.floor(Math.random()*safe.length)];
+        divs=[];
+        for(let d=2;d<n1;d++) if(n1%d===0) divs.push(d);
+      }
+      n2=divs[Math.floor(Math.random()*divs.length)];
+      ans=n1/n2;
+    }
+    this.n1=n1; this.n2=n2; this.ans=ans;
+    this.char1=new NumberBlock(n1,0,0);
+    this.char2=new NumberBlock(n2,0,0);
+    this.charRes=new NumberBlock(Math.round(ans),0,0);
+    this.revealed=false;
+  }
+  update(dt){
+    this.timer+=dt;
+    if(this.phase==='countdown'&&this.timer>=this.COUNTDOWN){
+      this.phase='reveal'; this.timer=0; this.revealed=true;
+    } else if(this.phase==='reveal'&&this.timer>=this.REVEAL){
+      this.phase='done';
+    }
+  }
+  draw(ctx, sw, sh){
+    // dark overlay
+    ctx.fillStyle='rgba(0,0,0,0.7)';
+    ctx.fillRect(0,0,sw,sh);
+
+    // white panel
+    const pw=Math.min(sw-40,400), ph=320;
+    const px=(sw-pw)/2, py=(sh-ph)/2;
+    ctx.fillStyle='white';
+    ctx.beginPath();
+    ctx.roundRect(px,py,pw,ph,16);
+    ctx.fill();
+
+    // op display
+    const opStr = this.op==='×'?'×':this.op==='÷'?'÷':this.op;
+    ctx.save();
+    ctx.font='bold 20px sans-serif';
+    ctx.textAlign='center';
+    ctx.textBaseline='top';
+    ctx.fillStyle='#333';
+    ctx.fillText(`${this.n1} ${opStr} ${this.n2} = ?`, sw/2, py+16);
+    ctx.restore();
+
+    // draw characters
+    const cy = py+80;
+    const bsCalc = (b)=>({w:b.width,h:b.height});
+    const c1=bsCalc(this.char1), c2=bsCalc(this.char2);
+    const spacing=30;
+    const totalW=c1.w+spacing+(this.op.length>1?30:20)+spacing+c2.w;
+    let cx=(sw-totalW)/2;
+    this.char1.x=cx; this.char1.y=cy-c1.h;
+    this.char1.draw(ctx, this.timer);
+    cx+=c1.w+spacing;
+    ctx.save();
+    ctx.font='bold 28px sans-serif';
+    ctx.textAlign='center';
+    ctx.textBaseline='middle';
+    ctx.fillStyle='#555';
+    ctx.fillText(opStr, cx+10, cy-c1.h/2);
+    ctx.restore();
+    cx+=spacing+20;
+    this.char2.x=cx; this.char2.y=cy-c2.h;
+    this.char2.draw(ctx, this.timer);
+
+    if(this.revealed){
+      const cr=bsCalc(this.charRes);
+      ctx.save();
+      ctx.font='bold 28px sans-serif';
+      ctx.textAlign='center';
+      ctx.textBaseline='middle';
+      ctx.fillStyle='#555';
+      ctx.fillText('=', sw/2, py+ph-100);
+      ctx.restore();
+      this.charRes.x=sw/2-cr.w/2;
+      this.charRes.y=py+ph-cr.h-20;
+      this.charRes.draw(ctx,0);
+    }
+
+    // countdown bar
+    if(this.phase==='countdown'){
+      const prog=Math.max(0,1-this.timer/this.COUNTDOWN);
+      const bw=pw-40, bh=14;
+      const bx=px+20, by=py+ph-30;
+      ctx.fillStyle='#ddd';
+      ctx.beginPath();
+      ctx.roundRect(bx,by,bw,bh,7);
+      ctx.fill();
+      ctx.fillStyle=prog>0.3?'#4caf50':'#f44336';
+      ctx.beginPath();
+      ctx.roundRect(bx,by,bw*prog,bh,7);
+      ctx.fill();
+    }
+  }
+}
+
+// ─── ADD mode state ───────────────────────────────────────────────────────────
+let addBlocks  = [];
+let dragBlock  = null;
+let dragOffX   = 0, dragOffY = 0;
+let lastTapBlock = null, lastTapTime = 0;
+let walkTime   = 0;
+
+function addFloor(){
+  return sh - GH - PAD_H - 12;
+}
+function addBlockFloor(b){
+  return addFloor() - b.height;
+}
+
+function applyAddPhysics(){
+  for(const b of addBlocks){
+    if(b===dragBlock) continue;
+    b.vy += GRAVITY;
+    b.x  += b.vx;
+    b.y  += b.vy;
+    b.vx *= FRICTION;
+    const fl = addBlockFloor(b);
+    if(b.y >= fl){ b.y=fl; b.vy=0; b.vx*=0.7; b.onGround=true; }
+    else { b.onGround=false; }
+    if(b.x<0) b.x=0;
+    if(b.x+b.width>sw) b.x=sw-b.width;
+  }
+}
+
+function tryMerge(b1, b2){
+  if(b1===b2) return false;
+  const dist = Math.hypot(b1.cx-b2.cx, b1.cy-b2.cy);
+  if(dist<40 && b1.num+b2.num<=100){
+    const newNum=b1.num+b2.num;
+    const nb=new NumberBlock(newNum, (b1.x+b2.x)/2, Math.min(b1.y,b2.y));
+    addBlocks=addBlocks.filter(b=>b!==b1&&b!==b2);
+    addBlocks.push(nb);
+    return true;
+  }
+  return false;
+}
+
+function drawAddFormula(ctx){
+  if(addBlocks.length===0) return;
+  const sorted=[...addBlocks].sort((a,b)=>a.x-b.x);
+  const nums=sorted.map(b=>b.num);
+  const sum=nums.reduce((a,v)=>a+v,0);
+  const formula=nums.join(' + ')+' = '+sum;
+  const maxW=sw-20;
+  ctx.save();
+  ctx.font='bold 18px sans-serif';
+  // word-wrap by tokens
+  const tokens=formula.split(' ');
+  let line='';
+  let lines=[];
+  for(const tok of tokens){
+    const test=line?line+' '+tok:tok;
+    if(ctx.measureText(test).width>maxW-20&&line){
+      lines.push(line); line=tok;
+    } else { line=test; }
+  }
+  if(line) lines.push(line);
+  const lineH=24;
+  const totalH=lines.length*lineH;
+  const startY=38;
+  ctx.textAlign='center';
+  ctx.textBaseline='middle';
+  for(let i=0;i<lines.length;i++){
+    const ty=startY+i*lineH;
+    ctx.strokeStyle='white';
+    ctx.lineWidth=4;
+    ctx.strokeText(lines[i], sw/2, ty);
+    ctx.fillStyle='#ff69b4';
+    ctx.fillText(lines[i], sw/2, ty);
+  }
+  ctx.restore();
+}
+
+function drawNumpad(ctx){
+  const padY=sh-PAD_H;
+  ctx.fillStyle='rgba(0,0,0,0.12)';
+  ctx.fillRect(0,padY,sw,PAD_H);
+
+  const btns=[];
+  const nums=[1,2,3,4,5,6,7,8,9,10];
+  const btnW=Math.min(Math.floor((sw-10)/6)-2,58);
+  const btnH=36;
+  const row1Y=padY+10;
+  const row2Y=padY+54;
+
+  // row1: 1-6
+  for(let i=0;i<6;i++){
+    btns.push({label:String(nums[i]),x:5+i*(btnW+2),y:row1Y,w:btnW,h:btnH,val:nums[i]});
+  }
+  // row2: 7-10 + R + CLR
+  for(let i=0;i<4;i++){
+    btns.push({label:String(nums[6+i]),x:5+i*(btnW+2),y:row2Y,w:btnW,h:btnH,val:nums[6+i]});
+  }
+  btns.push({label:'R',x:5+4*(btnW+2),y:row2Y,w:btnW,h:btnH,val:'R',color:'#5a9'});
+  btns.push({label:'CLR',x:5+5*(btnW+2),y:row2Y,w:btnW,h:btnH,val:'CLR',color:'#c55'});
+
+  // ALIGN button top-left
+  ctx.save();
+  ctx.fillStyle='rgba(100,180,255,0.9)';
+  ctx.beginPath();
+  ctx.roundRect(6,6,70,30,8);
+  ctx.fill();
+  ctx.fillStyle='white';
+  ctx.font='bold 13px sans-serif';
+  ctx.textAlign='center';
+  ctx.textBaseline='middle';
+  ctx.fillText('ALIGN',41,21);
+  ctx.restore();
+
+  for(const b of btns){
+    ctx.save();
+    ctx.fillStyle=b.color||'rgba(80,80,180,0.9)';
+    ctx.beginPath();
+    ctx.roundRect(b.x,b.y,b.w,b.h,8);
+    ctx.fill();
+    ctx.fillStyle='white';
+    ctx.font='bold 15px sans-serif';
+    ctx.textAlign='center';
+    ctx.textBaseline='middle';
+    ctx.fillText(b.label,b.x+b.w/2,b.y+b.h/2);
+    ctx.restore();
+  }
+  return btns;
+}
+
+let addNumpadBtns = [];
+function getNumpadBtns(){
+  const padY=sh-PAD_H;
+  const btnW=Math.min(Math.floor((sw-10)/6)-2,58);
+  const btnH=36;
+  const row1Y=padY+10;
+  const row2Y=padY+54;
+  const nums=[1,2,3,4,5,6,7,8,9,10];
+  const btns=[];
+  for(let i=0;i<6;i++)
+    btns.push({label:String(nums[i]),x:5+i*(btnW+2),y:row1Y,w:btnW,h:btnH,val:nums[i]});
+  for(let i=0;i<4;i++)
+    btns.push({label:String(nums[6+i]),x:5+i*(btnW+2),y:row2Y,w:btnW,h:btnH,val:nums[6+i]});
+  btns.push({label:'R',x:5+4*(btnW+2),y:row2Y,w:btnW,h:btnH,val:'R'});
+  btns.push({label:'CLR',x:5+5*(btnW+2),y:row2Y,w:btnW,h:btnH,val:'CLR'});
+  // ALIGN
+  btns.push({label:'ALIGN',x:6,y:6,w:70,h:30,val:'ALIGN'});
+  return btns;
+}
+
+function spawnAddBlock(num){
+  const x=sw/2-BS/2+(Math.random()-0.5)*100;
+  const b=new NumberBlock(num,x,60);
+  addBlocks.push(b);
+}
+
+function alignBlocks(){
+  const sorted=[...addBlocks].sort((a,b)=>a.num-b.num);
+  const total=sorted.reduce((s,b)=>s+b.width,0)+(sorted.length-1)*10;
+  let cx=(sw-total)/2;
+  const fl=addFloor();
+  for(const b of sorted){
+    b.x=cx; b.y=fl-b.height; b.vx=0; b.vy=0;
+    cx+=b.width+10;
+  }
+}
+
+// ─── MUL mode state ───────────────────────────────────────────────────────────
+let mulInput = '';
+let mulRows  = [];  // [{d,m,L,revealed,blocks,animProgress}]
+let mulRevealMap = {}; // key=rowIndex, val=bool
+
+function mulFactors(n){
+  const rows=[];
+  for(let d=1;d<=n;d++){
+    if(n%d===0){
+      const m=n/d;
+      rows.push({d,m,L:n,revealed:false,blocks:[],animProgress:0});
+    }
+  }
+  return rows;
+}
+
+function buildMulRows(n){
+  mulRows=mulFactors(n);
+  mulRevealMap={};
+}
+
+function drawMulMode(ctx, t){
+  // input display
+  ctx.save();
+  ctx.fillStyle='rgba(0,0,0,0.15)';
+  ctx.fillRect(0,0,sw,52);
+  ctx.font='bold 22px sans-serif';
+  ctx.textAlign='center';
+  ctx.textBaseline='middle';
+  ctx.fillStyle='white';
+  ctx.strokeStyle='rgba(0,0,0,0.5)';
+  ctx.lineWidth=2;
+  ctx.strokeText('入力: '+(mulInput||'?'), sw/2, 26);
+  ctx.fillText('入力: '+(mulInput||'?'), sw/2, 26);
+  ctx.restore();
+
+  // rows
+  const rowH=72;
+  const startY=64;
+  for(let ri=0;ri<mulRows.length;ri++){
+    const row=mulRows[ri];
+    const ry=startY+ri*rowH;
+    if(ry+rowH>sh-PAD_H-4) break;
+
+    // row bg
+    ctx.fillStyle=ri%2===0?'rgba(255,255,255,0.08)':'rgba(255,255,255,0.04)';
+    ctx.fillRect(0,ry,sw,rowH);
+
+    // label left: [d] × [m] = [L]
+    ctx.save();
+    ctx.font='14px sans-serif';
+    ctx.textAlign='left';
+    ctx.textBaseline='middle';
+    ctx.fillStyle='white';
+    ctx.fillText(`${row.d} × ${row.m} = ${row.L}`, 6, ry+rowH/2);
+    ctx.restore();
+
+    // blocks
+    const labelW=90;
+    const prog=Math.min(1,(t-row.startT||0)/1000);
+    const visCount=Math.floor(prog*row.m);
+    const blockX0=labelW;
+    for(let bi=0;bi<Math.min(visCount,row.m);bi++){
+      const nb=new NumberBlock(row.d, blockX0+bi*(row.d<=9?BS+2:row.d*BS/10+4), ry+4);
+      nb.draw(ctx,0);
+    }
+
+    // right panel: [L] ÷ [d] = ?
+    const revX=sw-120;
+    ctx.save();
+    ctx.fillStyle=mulRevealMap[ri]?'rgba(100,220,100,0.8)':'rgba(200,200,200,0.3)';
+    ctx.beginPath();
+    ctx.roundRect(revX,ry+8,sw-revX-6,rowH-16,8);
+    ctx.fill();
+    ctx.font='13px sans-serif';
+    ctx.textAlign='center';
+    ctx.textBaseline='middle';
+    ctx.fillStyle='#222';
+    const ans=mulRevealMap[ri]?String(row.m):'?';
+    ctx.fillText(`${row.L}÷${row.d}=${ans}`, revX+(sw-revX-6)/2, ry+rowH/2);
+    ctx.restore();
+  }
+
+  // numpad
+  drawMulNumpad(ctx);
+}
+
+function drawMulNumpad(ctx){
+  const padY=sh-PAD_H;
+  ctx.fillStyle='rgba(0,0,0,0.12)';
+  ctx.fillRect(0,padY,sw,PAD_H);
+
+  const btnW=Math.min(Math.floor((sw-10)/6)-2,58);
+  const btnH=36;
+  const btns=[];
+  const row1Y=padY+10;
+  const row2Y=padY+54;
+  for(let i=0;i<6;i++)
+    btns.push({label:String(i),x:5+i*(btnW+2),y:row1Y,w:btnW,h:btnH,val:String(i)});
+  for(let i=6;i<10;i++)
+    btns.push({label:String(i),x:5+(i-6)*(btnW+2),y:row2Y,w:btnW,h:btnH,val:String(i)});
+  btns.push({label:'OK',x:5+4*(btnW+2),y:row2Y,w:btnW,h:btnH,val:'OK',color:'#5a9'});
+  btns.push({label:'⌫',x:5+5*(btnW+2),y:row2Y,w:btnW,h:btnH,val:'DEL',color:'#c55'});
+
+  for(const b of btns){
+    ctx.save();
+    ctx.fillStyle=b.color||'rgba(80,80,180,0.9)';
+    ctx.beginPath();
+    ctx.roundRect(b.x,b.y,b.w,b.h,8);
+    ctx.fill();
+    ctx.fillStyle='white';
+    ctx.font='bold 15px sans-serif';
+    ctx.textAlign='center';
+    ctx.textBaseline='middle';
+    ctx.fillText(b.label,b.x+b.w/2,b.y+b.h/2);
+    ctx.restore();
+  }
+}
+
+function getMulNumpadBtns(){
+  const padY=sh-PAD_H;
+  const btnW=Math.min(Math.floor((sw-10)/6)-2,58);
+  const btnH=36;
+  const btns=[];
+  const row1Y=padY+10;
+  const row2Y=padY+54;
+  for(let i=0;i<6;i++)
+    btns.push({label:String(i),x:5+i*(btnW+2),y:row1Y,w:btnW,h:btnH,val:String(i)});
+  for(let i=6;i<10;i++)
+    btns.push({label:String(i),x:5+(i-6)*(btnW+2),y:row2Y,w:btnW,h:btnH,val:String(i)});
+  btns.push({label:'OK',x:5+4*(btnW+2),y:row2Y,w:btnW,h:btnH,val:'OK'});
+  btns.push({label:'⌫',x:5+5*(btnW+2),y:row2Y,w:btnW,h:btnH,val:'DEL'});
+  return btns;
+}
+
+// ─── WALK mode state ──────────────────────────────────────────────────────────
+let walkBlocks = [];
+let walkOps    = [];
+let battle     = null;
+let battleCooldown = 0;
+let walkT      = 0;
+
+function initWalkMode(){
+  walkBlocks=[];
+  walkOps=[];
+  for(let i=0;i<8;i++) walkOps.push(new OpItem(sw,sh));
+  for(let i=0;i<4;i++) spawnWalkBlock();
+}
+
+function spawnWalkBlock(){
+  const n=1+Math.floor(Math.random()*20);
+  const b=new NumberBlock(n,60+Math.random()*(sw-180),80+Math.random()*(sh-GH-SMALL_PAD_H-200));
+  b.vx=(Math.random()-0.5)*2;
+  b.vy=(Math.random()-0.5)*2;
+  walkBlocks.push(b);
+}
+
+function applyWalkPhysics(dt){
+  const top=60, bottom=sh-GH-SMALL_PAD_H;
+  for(const b of walkBlocks){
+    // random wander
+    b.walkAngle+=( Math.random()-0.5)*0.3;
+    b.vx+=Math.cos(b.walkAngle)*0.1;
+    b.vy+=Math.sin(b.walkAngle)*0.05;
+    // clamp speed
+    const spd=Math.hypot(b.vx,b.vy);
+    if(spd>b.walkSpeed){ b.vx*=b.walkSpeed/spd; b.vy*=b.walkSpeed/spd; }
+    b.x+=b.vx; b.y+=b.vy;
+    // bounce
+    if(b.x<0){ b.x=0; b.vx*=-1; }
+    if(b.x+b.width>sw){ b.x=sw-b.width; b.vx*=-1; }
+    if(b.y<top){ b.y=top; b.vy*=-1; }
+    if(b.y+b.height>bottom){ b.y=bottom-b.height; b.vy*=-1; }
+  }
+}
+
+function checkBattleTrigger(){
+  if(battle||battleCooldown>0) return;
+  for(const b of walkBlocks){
+    for(const op of walkOps){
+      const dist=Math.hypot(b.cx-op.x, b.cy-op.y);
+      if(dist<op.r+b.width/2){
+        battle=new Battle(b,op,sw,sh);
+        return;
+      }
+    }
+  }
+}
+
+function drawWalkButtons(ctx){
+  const padY=sh-SMALL_PAD_H;
+  ctx.fillStyle='rgba(0,0,0,0.12)';
+  ctx.fillRect(0,padY,sw,SMALL_PAD_H);
+  const btns=[
+    {label:'+ブロック',x:10,y:padY+8,w:120,h:34,val:'ADD_BLOCK',color:'rgba(60,160,80,0.9)'},
+    {label:'全消し',x:140,y:padY+8,w:90,h:34,val:'CLEAR_ALL',color:'rgba(200,60,60,0.9)'}
+  ];
+  for(const b of btns){
+    ctx.save();
+    ctx.fillStyle=b.color;
+    ctx.beginPath();
+    ctx.roundRect(b.x,b.y,b.w,b.h,8);
+    ctx.fill();
+    ctx.fillStyle='white';
+    ctx.font='bold 14px sans-serif';
+    ctx.textAlign='center';
+    ctx.textBaseline='middle';
+    ctx.fillText(b.label,b.x+b.w/2,b.y+b.h/2);
+    ctx.restore();
+  }
+  return btns;
+}
+
+function getWalkBtns(){
+  const padY=sh-SMALL_PAD_H;
+  return [
+    {label:'+ブロック',x:10,y:padY+8,w:120,h:34,val:'ADD_BLOCK'},
+    {label:'全消し',x:140,y:padY+8,w:90,h:34,val:'CLEAR_ALL'}
+  ];
+}
+
+// ─── Tabs ─────────────────────────────────────────────────────────────────────
+function drawTabs(ctx){
+  const tabs=['ADD','MUL','WALK'];
+  const tw=84, th=34;
+  const totalW=tabs.length*tw;
+  const startX=(sw-totalW)/2;
+  const ty=sh-PAD_H+(mode==='WALK'?PAD_H-SMALL_PAD_H:0)-th-4;
+
+  // draw at very top instead
+  for(let i=0;i<tabs.length;i++){
+    const tx=startX+i*tw;
+    const active=tabs[i]===mode;
+    ctx.save();
+    ctx.fillStyle=active?'rgba(100,160,255,0.95)':'rgba(60,60,60,0.7)';
+    ctx.beginPath();
+    ctx.roundRect(tx+2,4,tw-4,th,8);
+    ctx.fill();
+    ctx.fillStyle=active?'white':'#ccc';
+    ctx.font='bold 15px sans-serif';
+    ctx.textAlign='center';
+    ctx.textBaseline='middle';
+    ctx.fillText(tabs[i],tx+tw/2,4+th/2);
+    ctx.restore();
+  }
+  return tabs.map((t,i)=>({label:t,x:startX+i*tw+2,y:4,w:tw-4,h:th,val:t}));
+}
+
+let tabBtns=[];
+
+// ─── Background ───────────────────────────────────────────────────────────────
+function drawBG(ctx){
+  const grad=ctx.createLinearGradient(0,0,0,sh);
+  grad.addColorStop(0,'#a0d2ff');
+  grad.addColorStop(1,'#d2eeff');
+  ctx.fillStyle=grad;
+  ctx.fillRect(0,0,sw,sh);
+  // ground
+  ctx.fillStyle='rgb(160,230,160)';
+  ctx.fillRect(0,sh-GH-(mode==='WALK'?SMALL_PAD_H:PAD_H),sw,GH);
+}
+
+// ─── Hit test ─────────────────────────────────────────────────────────────────
+function ptInRect(px,py,x,y,w,h){ return px>=x&&px<=x+w&&py>=y&&py<=y+h; }
+
+// ─── Touch/Mouse events ───────────────────────────────────────────────────────
+function getPos(e, idx=0){
+  const rect=canvas.getBoundingClientRect();
+  const scaleX=sw/rect.width, scaleY=sh/rect.height;
+  if(e.touches||e.changedTouches){
+    const src=e.touches&&e.touches.length>0?e.touches:e.changedTouches;
+    const t=src[idx]||src[0];
+    return {x:(t.clientX-rect.left)*scaleX, y:(t.clientY-rect.top)*scaleY};
+  }
+  return {x:(e.clientX-rect.left)*scaleX, y:(e.clientY-rect.top)*scaleY};
+}
+
+// ADD mode pointers
+let addPointers={}; // pointerId -> {x,y,block}
+
+function handleAddTouchStart(x, y, pid){
+  // check tab
+  for(const tb of tabBtns){
+    if(ptInRect(x,y,tb.x,tb.y,tb.w,tb.h)){ setMode(tb.val); return; }
+  }
+  // check numpad
+  const btns=getNumpadBtns();
+  for(const b of btns){
+    if(ptInRect(x,y,b.x,b.y,b.w,b.h)){
+      if(b.val==='R') spawnAddBlock(1+Math.floor(Math.random()*100));
+      else if(b.val==='CLR') addBlocks=[];
+      else if(b.val==='ALIGN') alignBlocks();
+      else spawnAddBlock(Number(b.val));
+      return;
+    }
+  }
+  // check blocks (top to bottom in z-order = last spawned first)
+  for(let i=addBlocks.length-1;i>=0;i--){
+    const b=addBlocks[i];
+    if(ptInRect(x,y,b.x,b.y,b.width,b.height)){
+      // double tap?
+      const now=Date.now();
+      if(b===lastTapBlock&&now-lastTapTime<400){
+        addBlocks.splice(i,1);
+        lastTapBlock=null;
+        return;
+      }
+      lastTapBlock=b; lastTapTime=now;
+      addPointers[pid]={x,y,block:b,offX:x-b.x,offY:y-b.y};
+      dragBlock=b;
+      // bring to top
+      addBlocks.splice(i,1); addBlocks.push(b);
+      return;
+    }
+  }
+}
+
+function handleAddTouchMove(x, y, pid){
+  const ptr=addPointers[pid];
+  if(!ptr) return;
+  const b=ptr.block;
+  b.x=x-ptr.offX;
+  b.y=y-ptr.offY;
+  b.vx=x-ptr.x; b.vy=y-ptr.y;
+  ptr.x=x; ptr.y=y;
+}
+
+function handleAddTouchEnd(x, y, pid){
+  const ptr=addPointers[pid];
+  if(!ptr){ dragBlock=null; return; }
+  const b=ptr.block;
+  // try merge with nearby
+  for(const other of addBlocks){
+    if(other!==b) if(tryMerge(b,other)) { delete addPointers[pid]; dragBlock=null; return; }
+  }
+  dragBlock=null;
+  delete addPointers[pid];
+}
+
+// MUL mode
+function handleMulTap(x, y){
+  for(const tb of tabBtns){
+    if(ptInRect(x,y,tb.x,tb.y,tb.w,tb.h)){ setMode(tb.val); return; }
+  }
+  // reveal tap
+  const rowH=72, startY=64;
+  for(let ri=0;ri<mulRows.length;ri++){
+    const ry=startY+ri*rowH;
+    const revX=sw-120;
+    if(ptInRect(x,y,revX,ry+8,sw-revX-6,rowH-16)){
+      mulRevealMap[ri]=!mulRevealMap[ri];
+      return;
+    }
+  }
+  // numpad
+  const btns=getMulNumpadBtns();
+  for(const b of btns){
+    if(ptInRect(x,y,b.x,b.y,b.w,b.h)){
+      if(b.val==='OK'){
+        const n=parseInt(mulInput,10);
+        if(!isNaN(n)&&n>=1&&n<=100){ buildMulRows(n); }
+      } else if(b.val==='DEL'){
+        mulInput=mulInput.slice(0,-1);
+      } else {
+        if(mulInput.length<3) mulInput+=b.val;
+      }
+      return;
+    }
+  }
+}
+
+// WALK mode
+function handleWalkTap(x, y){
+  for(const tb of tabBtns){
+    if(ptInRect(x,y,tb.x,tb.y,tb.w,tb.h)){ setMode(tb.val); return; }
+  }
+  if(battle){
+    // tap dismisses only if done
+    if(battle.phase==='done') finishBattle();
+    return;
+  }
+  const btns=getWalkBtns();
+  for(const b of btns){
+    if(ptInRect(x,y,b.x,b.y,b.w,b.h)){
+      if(b.val==='ADD_BLOCK') spawnWalkBlock();
+      else if(b.val==='CLEAR_ALL'){ walkBlocks=[]; }
+      return;
+    }
+  }
+}
+
+function finishBattle(){
+  if(!battle) return;
+  const res=battle.charRes;
+  const b=battle.block;
+  b.num=res.num;
+  b._computeShape();
+  battle=null;
+  battleCooldown=4000;
+}
+
+// Mode switching
+function setMode(m){
+  mode=m;
+  if(m==='WALK'&&walkBlocks.length===0) initWalkMode();
+  // reset drag state
+  dragBlock=null; addPointers={};
+}
+
+// ─── Unified event handlers ───────────────────────────────────────────────────
+canvas.addEventListener('touchstart', e=>{
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    const {x,y}=getPos({changedTouches:[t]});
+    const pid=t.identifier;
+    if(mode==='ADD') handleAddTouchStart(x,y,pid);
+    else if(mode==='MUL') handleMulTap(x,y);
+    else handleWalkTap(x,y);
+  }
+},{passive:false});
+
+canvas.addEventListener('touchmove', e=>{
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    const {x,y}=getPos({changedTouches:[t]});
+    const pid=t.identifier;
+    if(mode==='ADD') handleAddTouchMove(x,y,pid);
+  }
+},{passive:false});
+
+canvas.addEventListener('touchend', e=>{
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    const {x,y}=getPos({changedTouches:[t]});
+    const pid=t.identifier;
+    if(mode==='ADD') handleAddTouchEnd(x,y,pid);
+  }
+},{passive:false});
+
+// Mouse fallback
+let mouseDown=false, mouseId='mouse';
+canvas.addEventListener('mousedown', e=>{
+  mouseDown=true;
+  const {x,y}=getPos(e);
+  if(mode==='ADD') handleAddTouchStart(x,y,mouseId);
+  else if(mode==='MUL') handleMulTap(x,y);
+  else handleWalkTap(x,y);
+});
+canvas.addEventListener('mousemove', e=>{
+  if(!mouseDown) return;
+  const {x,y}=getPos(e);
+  if(mode==='ADD') handleAddTouchMove(x,y,mouseId);
+});
+canvas.addEventListener('mouseup', e=>{
+  if(!mouseDown) return;
+  mouseDown=false;
+  const {x,y}=getPos(e);
+  if(mode==='ADD') handleAddTouchEnd(x,y,mouseId);
+});
+
+// ─── Main loop ────────────────────────────────────────────────────────────────
+let lastTime=0;
+function loop(ts){
+  const dt=Math.min(ts-lastTime,100);
+  lastTime=ts;
+  walkTime+=dt;
+
+  ctx.clearRect(0,0,sw,sh);
+  drawBG(ctx);
+  tabBtns=drawTabs(ctx);
+
+  if(mode==='ADD'){
+    applyAddPhysics();
+    for(const b of addBlocks) b.draw(ctx,walkTime);
+    drawAddFormula(ctx);
+    addNumpadBtns=drawNumpad(ctx);
+  }
+  else if(mode==='MUL'){
+    // init rows start times
+    for(const row of mulRows){
+      if(row.startT===undefined) row.startT=walkTime;
+    }
+    drawMulMode(ctx,walkTime);
+  }
+  else if(mode==='WALK'){
+    if(!battle){
+      if(battleCooldown>0) battleCooldown-=dt;
+      applyWalkPhysics(dt);
+      for(const op of walkOps) op.update(sw,sh);
+      checkBattleTrigger();
+    } else {
+      battle.sw=sw; battle.sh=sh;
+      battle.update(dt);
+      if(battle.phase==='done') finishBattle();
+    }
+    for(const b of walkBlocks) b.draw(ctx,walkTime);
+    for(const op of walkOps) op.draw(ctx);
+    if(battle) battle.draw(ctx,sw,sh);
+    drawWalkButtons(ctx);
+  }
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
