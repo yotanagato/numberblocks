@@ -283,56 +283,64 @@ class Puzzle {
   }
 
   _genChoices(ans){
-    const choices = new Set();
-    choices.add(ans);
-
     const n1 = this.n1;
     const n2 = this.n2;
 
+    const candidates = new Set();
+
     function addIfValid(v){
       if(v >= 1 && v <= 100 && v !== ans){
-        choices.add(v);
+        candidates.add(v);
       }
     }
 
-    // --- ① 操作ミス系 ---
+    // --- ① 操作ミス ---
     if(this.calcMode === '+'){
-      addIfValid(n1 * n2);          // 掛け算と勘違い
-      addIfValid(Math.abs(n1 - n2));// 引き算と勘違い
-    }
-    else if(this.calcMode === '-'){
-      addIfValid(n1 + n2);          // 足し算と勘違い
-      addIfValid(n2 - n1);          // 順序ミス
-    }
-    else if(this.calcMode === 'x'){
-      addIfValid(n1 + n2);          // 足し算と勘違い
-      addIfValid(Math.abs(n1 - n2));// 引き算と勘違い
-    }
-    else if(this.calcMode === 'div'){
-      addIfValid(n1 * n2);          // 掛け算と勘違い
-      addIfValid(n1 + n2);          // 足し算と勘違い
+      addIfValid(n1 * n2);
+      addIfValid(Math.abs(n1 - n2));
+    } else if(this.calcMode === '-'){
+      addIfValid(n1 + n2);
+      addIfValid(n2 - n1);
+    } else if(this.calcMode === 'x'){
+      addIfValid(n1 + n2);
+      addIfValid(Math.abs(n1 - n2));
+    } else if(this.calcMode === 'div'){
+      addIfValid(n1 * n2);
+      addIfValid(n1 + n2);
     }
 
-    // --- ② 計算ミス系（±1〜5のズレ）---
-    for(let i=0;i<5 && choices.size<4;i++){
+    // --- ② 計算ミス ---
+    for(let i=0;i<10;i++){
       const diff = Math.floor(Math.random()*5)+1;
-      const sign = Math.random()<0.5?-1:1;
-      addIfValid(ans + sign*diff);
+      addIfValid(ans + diff);
+      addIfValid(ans - diff);
     }
 
-    // --- ③ 近似ミス（桁ズレっぽい）---
+    // --- ③ 近似 ---
     addIfValid(ans + 10);
     addIfValid(ans - 10);
 
-    // --- 足りなければランダム補充 ---
-    while(choices.size < 4){
+    // --- 配列化してシャッフル ---
+    let wrongs = [...candidates];
+
+    // 不足分を補充
+    while(wrongs.length < 3){
       const v = ans + (Math.random()<0.5?-1:1)*(Math.floor(Math.random()*20)+1);
-      addIfValid(v);
+      if(v >= 1 && v <= 100 && v !== ans && !wrongs.includes(v)){
+        wrongs.push(v);
+      }
     }
 
-    // 昇順
-    return [...choices].sort((a,b)=>a-b);
+    // 3つに絞る
+    wrongs = wrongs.slice(0,3);
+
+    // ★ 最後に正解を必ず追加
+    const choices = [ans, ...wrongs];
+
+    // 昇順ソート
+    return choices.sort((a,b)=>a-b);
   }
+
 
   tapChoice(idx){
     if(this.phase!=='countdown') return;
