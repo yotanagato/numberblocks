@@ -283,12 +283,55 @@ class Puzzle {
   }
 
   _genChoices(ans){
-    const wrongs=new Set();
-    const diffs=ans<=10?[1,2,3,-1,-2,-3,4,-4]:ans<=30?[1,2,5,-1,-2,-5,3,-3]:[2,5,10,-2,-5,-10,3,-3];
-    for(const d of diffs){ const v=ans+d; if(v>=1&&v<=100&&v!==ans) wrongs.add(v); if(wrongs.size>=3) break; }
-    for(let i=1;wrongs.size<3&&i<=20;i++) if(ans+i>=1&&ans+i<=100) wrongs.add(ans+i);
-    // 昇順にソート
-    return [ans,...[...wrongs].slice(0,3)].sort((a,b)=>a-b);
+    const choices = new Set();
+    choices.add(ans);
+
+    const n1 = this.n1;
+    const n2 = this.n2;
+
+    function addIfValid(v){
+      if(v >= 1 && v <= 100 && v !== ans){
+        choices.add(v);
+      }
+    }
+
+    // --- ① 操作ミス系 ---
+    if(this.calcMode === '+'){
+      addIfValid(n1 * n2);          // 掛け算と勘違い
+      addIfValid(Math.abs(n1 - n2));// 引き算と勘違い
+    }
+    else if(this.calcMode === '-'){
+      addIfValid(n1 + n2);          // 足し算と勘違い
+      addIfValid(n2 - n1);          // 順序ミス
+    }
+    else if(this.calcMode === 'x'){
+      addIfValid(n1 + n2);          // 足し算と勘違い
+      addIfValid(Math.abs(n1 - n2));// 引き算と勘違い
+    }
+    else if(this.calcMode === 'div'){
+      addIfValid(n1 * n2);          // 掛け算と勘違い
+      addIfValid(n1 + n2);          // 足し算と勘違い
+    }
+
+    // --- ② 計算ミス系（±1〜5のズレ）---
+    for(let i=0;i<5 && choices.size<4;i++){
+      const diff = Math.floor(Math.random()*5)+1;
+      const sign = Math.random()<0.5?-1:1;
+      addIfValid(ans + sign*diff);
+    }
+
+    // --- ③ 近似ミス（桁ズレっぽい）---
+    addIfValid(ans + 10);
+    addIfValid(ans - 10);
+
+    // --- 足りなければランダム補充 ---
+    while(choices.size < 4){
+      const v = ans + (Math.random()<0.5?-1:1)*(Math.floor(Math.random()*20)+1);
+      addIfValid(v);
+    }
+
+    // 昇順
+    return [...choices].sort((a,b)=>a-b);
   }
 
   tapChoice(idx){
