@@ -9,31 +9,15 @@
     body { background:#000; overflow:hidden; touch-action:none; }
     canvas { display:block; }
     #factor-ui {
-      display:none;
-      position:fixed;
-      bottom:0; left:0; right:0;
-      height:115px;
-      background:rgba(0,0,0,0.18);
-      z-index:10;
-      padding:10px 16px 12px 16px;
-      flex-direction:column;
-      align-items:center;
-      gap:6px;
+      display:none; position:fixed;
+      bottom:0; left:0; right:0; height:115px;
+      background:rgba(0,0,0,0.18); z-index:10;
+      padding:10px 16px 12px; flex-direction:column;
+      align-items:center; gap:6px;
     }
     #factor-ui.visible { display:flex; }
-    #factor-num {
-      font-size:28px;
-      font-weight:bold;
-      color:white;
-      text-shadow:0 1px 4px rgba(0,0,0,0.6);
-      line-height:1;
-    }
-    #factor-range {
-      width:min(340px,90vw);
-      height:28px;
-      cursor:pointer;
-      accent-color:#f80;
-    }
+    #factor-num { font-size:28px; font-weight:bold; color:white; line-height:1; }
+    #factor-range { width:min(340px,90vw); height:28px; cursor:pointer; accent-color:#f80; }
   </style>
 </head>
 <body>
@@ -55,8 +39,7 @@ if (!CanvasRenderingContext2D.prototype.roundRect) {
     this.lineTo(x+w,y+h-r[2]); this.arcTo(x+w,y+h,x+w-r[2],y+h,r[2]);
     this.lineTo(x+r[3],y+h); this.arcTo(x,y+h,x,y+h-r[3],r[3]);
     this.lineTo(x,y+r[0]); this.arcTo(x,y,x+r[0],y,r[0]);
-    this.closePath();
-    return this;
+    this.closePath(); return this;
   };
 }
 
@@ -64,22 +47,24 @@ if (!CanvasRenderingContext2D.prototype.roundRect) {
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 let sw = 0, sh = 0;
-
-function resize(){
-  sw = canvas.width  = window.innerWidth;
-  sh = canvas.height = window.innerHeight;
-}
+function resize(){ sw = canvas.width = window.innerWidth; sh = canvas.height = window.innerHeight; }
 window.addEventListener('resize', resize);
 resize();
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-const BS       = 22;
+// ─── Constants / size ────────────────────────────────────────────────────────
+const BS_MAP = { S:16, M:22, L:28 };
+let bsKey = 'M';
+let BS = BS_MAP[bsKey];
 const GRAVITY  = 0.4;
 const GH       = 50;
-const PAD_H    = 115;
-const FACTOR_H = 115;
 const TAB_H    = 38;
+const FACTOR_H = 115;
 
+function isLandscape(){ return sw > sh * 1.2; }
+function getPadH(){ return isLandscape() ? 56 : 110; }
+function calcFloor(){ return sh - GH - (mode==='factor' ? FACTOR_H : getPadH()) - 12; }
+
+// ─── Colors ───────────────────────────────────────────────────────────────────
 const COLORS = {
   1:[222,21,29], 2:[232,146,35], 3:[230,196,12], 4:[56,181,0],
   5:[35,176,219], 6:[90,53,195], 7:[186,121,221], 8:[255,0,100],
@@ -89,1044 +74,654 @@ const COLORS = {
 };
 const RAINBOW = [[222,21,29],[232,146,35],[230,196,12],[56,181,0],[35,176,219],[90,53,195],[186,121,221]];
 const PASTEL_RAINBOW = [[255,180,180],[255,220,180],[255,255,180],[180,255,180],[180,255,255],[180,180,255],[220,180,255]];
-
 function rgb(a){ return `rgb(${a[0]},${a[1]},${a[2]})`; }
 
-// ─── Tabs ─────────────────────────────────────────────────────────────────────
-// Internal mode values: '+' | '-' | 'x' | 'div' | 'factor'
+// ─── Tabs & Size buttons ──────────────────────────────────────────────────────
 let mode = '+';
-
 const TAB_DEFS = [
-  { label:'+',     val:'+' },
-  { label:'−',     val:'-' },
-  { label:'×',     val:'x' },
-  { label:'÷',     val:'div' },
-  { label:'因数',  val:'factor' }
+  {label:'+', val:'+'}, {label:'−', val:'-'},
+  {label:'×', val:'x'}, {label:'÷', val:'div'},
+  {label:'因数', val:'factor'}
 ];
+let tabBtns = [], sizeBtns = [];
 
-let tabBtns = [];
-
-function drawTabs(ctx){
+function drawTabsAndUI(ctx){
   const n = TAB_DEFS.length;
-  const tw = Math.min(Math.floor(sw/n), 90);
-  const totalW = n * tw;
-  const sx = (sw - totalW)/2;
-  const btns = [];
+  const tabW = Math.min(Math.floor((sw - 96) / n), 82);
+  const totalTabW = n * tabW;
+  const tabSX = Math.max(0, (sw - 96 - totalTabW) / 2);
+  tabBtns = [];
   for(let i=0;i<n;i++){
-    const td = TAB_DEFS[i];
-    const tx = sx + i*tw;
-    const active = td.val === mode;
+    const td=TAB_DEFS[i], tx=tabSX+i*tabW, active=td.val===mode;
     ctx.save();
-    ctx.fillStyle = active ? 'rgba(100,160,255,0.95)' : 'rgba(50,50,50,0.80)';
-    ctx.beginPath();
-    ctx.roundRect(tx+2, 2, tw-4, TAB_H-4, 8);
-    ctx.fill();
-    if(active){
-      ctx.strokeStyle='rgba(255,255,255,0.7)';
-      ctx.lineWidth=1.5;
-      ctx.beginPath();
-      ctx.roundRect(tx+2, 2, tw-4, TAB_H-4, 8);
-      ctx.stroke();
-    }
-    ctx.fillStyle = active ? 'white' : '#ccc';
-    ctx.font = 'bold ' + (td.label.length>1?'13':'16') + 'px sans-serif';
-    ctx.textAlign='center';
-    ctx.textBaseline='middle';
-    ctx.fillText(td.label, tx+tw/2, 2+(TAB_H-4)/2);
+    ctx.fillStyle = active?'rgba(100,160,255,0.95)':'rgba(50,50,50,0.80)';
+    ctx.beginPath(); ctx.roundRect(tx+2,2,tabW-4,TAB_H-4,8); ctx.fill();
+    if(active){ ctx.strokeStyle='rgba(255,255,255,0.7)'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.roundRect(tx+2,2,tabW-4,TAB_H-4,8); ctx.stroke(); }
+    ctx.fillStyle=active?'white':'#ccc';
+    ctx.font='bold '+(td.label.length>1?'13':'16')+'px sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(td.label,tx+tabW/2,2+(TAB_H-4)/2);
     ctx.restore();
-    btns.push({x:tx+2,y:2,w:tw-4,h:TAB_H-4,val:td.val});
+    tabBtns.push({x:tx+2,y:2,w:tabW-4,h:TAB_H-4,val:td.val});
   }
-  return btns;
+  // S/M/L buttons
+  const szW=26, szH=TAB_H-8;
+  sizeBtns = [];
+  ['S','M','L'].forEach((k,i)=>{
+    const bx=sw-3*(szW+2)+i*(szW+2)-2, by=4, active=bsKey===k;
+    ctx.save();
+    ctx.fillStyle=active?'rgba(255,180,0,0.95)':'rgba(50,50,50,0.8)';
+    ctx.beginPath(); ctx.roundRect(bx,by,szW,szH,5); ctx.fill();
+    ctx.fillStyle=active?'#333':'#aaa'; ctx.font='bold 12px sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(k,bx+szW/2,by+szH/2);
+    ctx.restore();
+    sizeBtns.push({x:bx,y:by,w:szW,h:szH,val:k});
+  });
 }
 
-// ─── NumberBlock class ────────────────────────────────────────────────────────
+// ─── NumberBlock ──────────────────────────────────────────────────────────────
 let blockIdCounter = 0;
-
 class NumberBlock {
-  constructor(num, x, y){
-    this.id  = blockIdCounter++;
-    this.num = Math.max(1, Math.min(100, num));
-    this.x   = x;
-    this.y   = y;
-    this.vx  = 0;
-    this.vy  = 0;
-    this.onGround = false;
-    this.targetX  = x;
+  constructor(num,x,y){
+    this.id=blockIdCounter++; this.num=Math.max(1,Math.min(100,num));
+    this.x=x; this.y=y; this.vx=0; this.vy=0; this.onGround=false; this.targetX=x;
     this._computeShape();
   }
-
   _computeShape(){
-    const n = this.num;
+    const n=this.num;
     if(n===100){ this.cols=10; this.rows=10; }
     else if(n===90){ this.cols=9; this.rows=10; }
-    else if([4,9,16,25,36,49,64,81].includes(n)){
-      const s=Math.round(Math.sqrt(n)); this.cols=s; this.rows=s;
-    }
+    else if([4,9,16,25,36,49,64,81].includes(n)){ const s=Math.round(Math.sqrt(n)); this.cols=s; this.rows=s; }
     else if(n>=31&&n<=99){ this.cols=Math.ceil(n/10); this.rows=10; }
     else if(n===30){ this.cols=3; this.rows=10; }
     else if(n>=21&&n<=29){ this.cols=3; this.rows=10; }
     else if(n===20){ this.cols=2; this.rows=10; }
     else if(n>=11&&n<=19){ this.cols=2; this.rows=10; }
     else { this.cols=1; this.rows=n; }
-    this.width  = this.cols * BS;
-    this.height = this.rows * BS;
+    this.width=this.cols*BS; this.height=this.rows*BS;
   }
-
-  get cx(){ return this.x + this.width/2; }
-  get cy(){ return this.y + this.height/2; }
-
+  get cx(){ return this.x+this.width/2; }
+  get cy(){ return this.y+this.height/2; }
   _blockPos(i){
-    const n=this.num, cols=this.cols, rows=this.rows;
-    let ix,iy;
-    if(n===100||[4,9,16,25,36,49,64,81].includes(n)){
-      ix=i%cols; iy=rows-1-Math.floor(i/cols);
-    } else if(n===90||n%10===0){
-      ix=Math.floor(i/10); iy=9-(i%10);
-    } else if(n>=21&&n<=29){
-      if(i<20){ ix=i%2; iy=9-Math.floor(i/2); }
-      else { ix=2; iy=9-(i-20); }
-    } else if(n===20){
-      ix=i%2; iy=9-Math.floor(i/2);
-    } else if(n>=11&&n<=19){
-      if(i<10){ ix=0; iy=9-i; }
-      else { ix=1; iy=9-(i-10); }
-    } else if(n>30){
-      const tl=Math.floor(n/10)*10;
-      if(i<tl){ ix=Math.floor(i/10); iy=9-(i%10); }
-      else { ix=cols-1; iy=9-(i-tl); }
-    } else {
-      ix=0; iy=rows-1-i;
-    }
+    const n=this.num,cols=this.cols,rows=this.rows; let ix,iy;
+    if(n===100||[4,9,16,25,36,49,64,81].includes(n)){ ix=i%cols; iy=rows-1-Math.floor(i/cols); }
+    else if(n===90||n%10===0){ ix=Math.floor(i/10); iy=9-(i%10); }
+    else if(n>=21&&n<=29){ if(i<20){ ix=i%2; iy=9-Math.floor(i/2); } else { ix=2; iy=9-(i-20); } }
+    else if(n===20){ ix=i%2; iy=9-Math.floor(i/2); }
+    else if(n>=11&&n<=19){ if(i<10){ ix=0; iy=9-i; } else { ix=1; iy=9-(i-10); } }
+    else if(n>30){ const tl=Math.floor(n/10)*10; if(i<tl){ ix=Math.floor(i/10); iy=9-(i%10); } else { ix=cols-1; iy=9-(i-tl); } }
+    else { ix=0; iy=rows-1-i; }
     return {ix,iy};
   }
-
   _blockColor(i){
     const n=this.num;
-    if(n===100){
-      const {ix,iy}=this._blockPos(i);
-      return (ix+iy)%2===0?[255,180,180]:[255,50,50];
-    }
+    if(n===100){ const {ix,iy}=this._blockPos(i); return (ix+iy)%2===0?[255,180,180]:[255,50,50]; }
     const {ix}=this._blockPos(i);
-    if(Math.floor(n/10)*10===70&&i<70){
-      return PASTEL_RAINBOW[ix%7];
-    }
-    if(n%10===7&&n!==7&&i>=Math.floor(n/10)*10){
-      return RAINBOW[(i-Math.floor(n/10)*10)%7];
-    }
+    if(Math.floor(n/10)*10===70&&i<70) return PASTEL_RAINBOW[ix%7];
+    if(n%10===7&&n!==7&&i>=Math.floor(n/10)*10) return RAINBOW[(i-Math.floor(n/10)*10)%7];
     if(n===7) return RAINBOW[i%7];
     const tens=Math.floor(n/10)*10;
-    if(i<tens&&tens>0&&COLORS[tens]){
-      return COLORS[tens];
-    }
-    const ones=n%10;
-    return COLORS[ones]||[150,150,150];
+    if(i<tens&&tens>0&&COLORS[tens]) return COLORS[tens];
+    return COLORS[n%10]||[150,150,150];
   }
-
-  draw(ctx, t=0, bounceY=0){
-    const n=this.num;
-    const x=this.x;
-    const y=this.y + bounceY;
-    const isMoving = Math.abs(this.vx)>0.5 || Math.abs(this.vy)>1.0;
-
-    // limbs
-    this._drawLimbs(ctx, t, isMoving, x, y);
-
-    // blocks
+  draw(ctx,t=0,bounceY=0){
+    const n=this.num,x=this.x,y=this.y+bounceY;
+    const isMoving=Math.abs(this.vx)>0.5||Math.abs(this.vy)>1.0;
+    this._drawLimbs(ctx,t,isMoving,x,y);
     for(let i=0;i<n;i++){
       const {ix,iy}=this._blockPos(i);
-      const bx=x+ix*BS, by=y+iy*BS;
-      const col=this._blockColor(i);
-      ctx.fillStyle=rgb(col);
-      ctx.beginPath();
-      ctx.roundRect(bx+1,by+1,BS-2,BS-2,3);
-      ctx.fill();
-      const tens=Math.floor(n/10)*10;
-      let bCol='rgba(0,0,0,0.22)', bLw=0.5;
-      if(tens>0&&i<tens){
-        if(tens===10){ bCol='rgba(220,0,0,0.85)'; bLw=1.5; }
-        else if(tens===20){ bCol='rgba(255,140,0,0.85)'; bLw=1.5; }
-      }
-      ctx.strokeStyle=bCol; ctx.lineWidth=bLw;
-      ctx.beginPath();
-      ctx.roundRect(bx+1,by+1,BS-2,BS-2,3);
-      ctx.stroke();
+      const bx=x+ix*BS,by=y+iy*BS,col=this._blockColor(i);
+      ctx.fillStyle=rgb(col); ctx.beginPath(); ctx.roundRect(bx+1,by+1,BS-2,BS-2,3); ctx.fill();
+      const tens=Math.floor(n/10)*10; let bCol='rgba(0,0,0,0.22)',bLw=0.5;
+      if(tens>0&&i<tens){ if(tens===10){bCol='rgba(220,0,0,0.85)';bLw=1.5;} else if(tens===20){bCol='rgba(255,140,0,0.85)';bLw=1.5;} }
+      ctx.strokeStyle=bCol; ctx.lineWidth=bLw; ctx.beginPath(); ctx.roundRect(bx+1,by+1,BS-2,BS-2,3); ctx.stroke();
     }
-
-    // face
-    this._drawFace(ctx, x, y);
-
-    // label
-    ctx.save();
-    ctx.textAlign='center';
-    ctx.textBaseline='bottom';
-    ctx.font='bold 13px sans-serif';
-    ctx.strokeStyle='white';
-    ctx.lineWidth=3;
-    ctx.strokeText(String(n), x+this.width/2, y-4);
-    ctx.fillStyle='#111';
-    ctx.fillText(String(n), x+this.width/2, y-4);
+    this._drawFace(ctx,x,y);
+    ctx.save(); ctx.textAlign='center'; ctx.textBaseline='bottom'; ctx.font='bold '+Math.max(9,Math.round(BS*0.6))+'px sans-serif';
+    ctx.strokeStyle='white'; ctx.lineWidth=3; ctx.strokeText(String(n),x+this.width/2,y-3);
+    ctx.fillStyle='#111'; ctx.fillText(String(n),x+this.width/2,y-3);
     ctx.restore();
   }
-
-  _drawLimbs(ctx, t, isMoving, x, y){
-    const w=this.width, h=this.height;
-    const legSwing = isMoving ? Math.sin(t*0.009)*12 : 0;
-    const armSwing = isMoving ? Math.sin(t*0.009+Math.PI)*10 : 0;
-    ctx.strokeStyle='rgba(80,40,0,0.8)';
-    ctx.lineWidth=3;
-    ctx.lineCap='round';
-    ctx.beginPath();
-    ctx.moveTo(x+w*0.3, y+h);
-    ctx.lineTo(x+w*0.3+legSwing, y+h+14);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(x+w*0.7, y+h);
-    ctx.lineTo(x+w*0.7-legSwing, y+h+14);
-    ctx.stroke();
-    const armY = y + Math.min(h*0.7, h-10);
-    ctx.beginPath();
-    ctx.moveTo(x, armY);
-    ctx.lineTo(x-10, armY+8+armSwing);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(x+w, armY);
-    ctx.lineTo(x+w+10, armY+8-armSwing);
-    ctx.stroke();
+  _drawLimbs(ctx,t,isMoving,x,y){
+    const w=this.width,h=this.height;
+    const ll=BS*0.65, ao=BS*0.46, ad=BS*0.37;
+    const legSwing=isMoving?Math.sin(t*0.009)*12:0;
+    const armSwing=isMoving?Math.sin(t*0.009+Math.PI)*10:0;
+    ctx.strokeStyle='rgba(80,40,0,0.8)'; ctx.lineWidth=Math.max(2,BS*0.13); ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(x+w*0.3,y+h); ctx.lineTo(x+w*0.3+legSwing,y+h+ll); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x+w*0.7,y+h); ctx.lineTo(x+w*0.7-legSwing,y+h+ll); ctx.stroke();
+    const armY=y+Math.min(h*0.7,h-BS*0.45);
+    ctx.beginPath(); ctx.moveTo(x,armY); ctx.lineTo(x-ao,armY+ad+armSwing); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x+w,armY); ctx.lineTo(x+w+ao,armY+ad-armSwing); ctx.stroke();
   }
-
-  _drawFace(ctx, x, y){
-    const n=this.num;
-    const w=this.width, h=this.height;
-    const fx = (n>=20&&n!==100)? x+BS : x+w/2;
-    const fy = y + (n===1?h*0.5:h*0.25);
-
-    ctx.fillStyle='white';
-    ctx.strokeStyle='black';
-    ctx.lineWidth=1;
-
+  _drawFace(ctx,x,y){
+    const n=this.num,w=this.width,h=this.height;
+    const fx=(n>=20&&n!==100)?x+BS:x+w/2, fy=y+(n===1?h*0.5:h*0.25);
+    ctx.fillStyle='white'; ctx.strokeStyle='black'; ctx.lineWidth=1;
     if(n===1){
-      ctx.beginPath();
-      ctx.arc(fx,fy,6,0,Math.PI*2);
-      ctx.fill(); ctx.stroke();
-      ctx.fillStyle='black';
-      ctx.beginPath();
-      ctx.arc(fx,fy,2.5,0,Math.PI*2);
-      ctx.fill();
+      ctx.beginPath(); ctx.arc(fx,fy,6,0,Math.PI*2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle='black'; ctx.beginPath(); ctx.arc(fx,fy,2.5,0,Math.PI*2); ctx.fill();
     } else if(n===20){
-      ctx.strokeStyle='purple';
-      ctx.lineWidth=1.5;
-      const ex1=x+BS*0.5, ex2=x+BS*1.5, ey=y+h*0.25;
-      ctx.beginPath();
-      ctx.moveTo(ex1,ey); ctx.lineTo(ex2,ey);
-      ctx.stroke();
+      ctx.strokeStyle='purple'; ctx.lineWidth=1.5;
+      const ex1=x+BS*0.5,ex2=x+BS*1.5,ey=y+h*0.25;
+      ctx.beginPath(); ctx.moveTo(ex1,ey); ctx.lineTo(ex2,ey); ctx.stroke();
       for(const ex of [ex1,ex2]){
-        ctx.beginPath();
-        ctx.arc(ex,ey,4,0,Math.PI*2);
-        ctx.fillStyle='white'; ctx.fill();
-        ctx.strokeStyle='purple'; ctx.stroke();
-        ctx.fillStyle='black';
-        ctx.beginPath();
-        ctx.arc(ex,ey,1.5,0,Math.PI*2);
-        ctx.fill();
+        ctx.beginPath(); ctx.arc(ex,ey,4,0,Math.PI*2); ctx.fillStyle='white'; ctx.fill(); ctx.strokeStyle='purple'; ctx.stroke();
+        ctx.fillStyle='black'; ctx.beginPath(); ctx.arc(ex,ey,1.5,0,Math.PI*2); ctx.fill();
       }
     } else {
       for(const dx of [-6,6]){
-        ctx.beginPath();
-        ctx.arc(fx+dx,fy,3.5,0,Math.PI*2);
-        ctx.fillStyle='white'; ctx.fill();
-        ctx.strokeStyle='black'; ctx.stroke();
-        ctx.fillStyle='black';
-        ctx.beginPath();
-        ctx.arc(fx+dx+0.5,fy+0.5,1.5,0,Math.PI*2);
-        ctx.fill();
+        ctx.beginPath(); ctx.arc(fx+dx,fy,3.5,0,Math.PI*2); ctx.fillStyle='white'; ctx.fill(); ctx.strokeStyle='black'; ctx.stroke();
+        ctx.fillStyle='black'; ctx.beginPath(); ctx.arc(fx+dx+0.5,fy+0.5,1.5,0,Math.PI*2); ctx.fill();
       }
     }
   }
 }
 
-// ─── Particle (Confetti) class ────────────────────────────────────────────────
+// ─── Particle ─────────────────────────────────────────────────────────────────
 class Particle {
-  constructor(x, y){
-    this.x = x;
-    this.y = y;
-    this.vx = (Math.random()-0.5)*8;
-    this.vy = -Math.random()*10 - 2;
-    this.gravity = 0.5;
-    this.hue = Math.random()*360;
-    this.life = 1.0;
-    this.rot = Math.random()*Math.PI*2;
-    this.rotV = (Math.random()-0.5)*0.2;
-    this.w = 6 + Math.random()*6;
-    this.h = 4 + Math.random()*4;
+  constructor(x,y){
+    this.x=x; this.y=y; this.vx=(Math.random()-0.5)*10; this.vy=-Math.random()*12-2;
+    this.gravity=0.5; this.hue=Math.random()*360; this.life=1.0;
+    this.rot=Math.random()*Math.PI*2; this.rotV=(Math.random()-0.5)*0.2;
+    this.w=6+Math.random()*6; this.h=4+Math.random()*4;
   }
-  update(){
-    this.vy += this.gravity;
-    this.x  += this.vx;
-    this.y  += this.vy;
-    this.rot += this.rotV;
-    this.life -= 0.018;
-  }
+  update(){ this.vy+=this.gravity; this.x+=this.vx; this.y+=this.vy; this.rot+=this.rotV; this.life-=0.018; }
   draw(ctx){
     if(this.life<=0) return;
-    ctx.save();
-    ctx.globalAlpha = Math.max(0, this.life);
-    ctx.translate(this.x, this.y);
-    ctx.rotate(this.rot);
-    ctx.fillStyle = `hsl(${this.hue},90%,60%)`;
-    ctx.fillRect(-this.w/2, -this.h/2, this.w, this.h);
+    ctx.save(); ctx.globalAlpha=Math.max(0,this.life); ctx.translate(this.x,this.y); ctx.rotate(this.rot);
+    ctx.fillStyle=`hsl(${this.hue},90%,60%)`; ctx.fillRect(-this.w/2,-this.h/2,this.w,this.h);
     ctx.restore();
   }
 }
 
-// ─── Helper: no-entry sign ────────────────────────────────────────────────────
-function drawNoEntry(ctx, x, y, r){
-  ctx.save();
-  ctx.fillStyle='rgba(200,0,0,0.92)';
-  ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
-  ctx.strokeStyle='white'; ctx.lineWidth=r*0.12;
-  ctx.beginPath(); ctx.arc(x,y,r*0.88,0,Math.PI*2); ctx.stroke();
-  ctx.fillStyle='white';
-  const bw=r*1.4, bh=r*0.45;
-  ctx.beginPath();
-  ctx.roundRect(x-bw/2, y-bh/2, bw, bh, bh*0.3);
-  ctx.fill();
-  ctx.restore();
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function drawNoEntry(ctx,x,y,r){
+  ctx.save(); ctx.fillStyle='rgba(200,0,0,0.92)'; ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='white'; ctx.lineWidth=r*0.12; ctx.beginPath(); ctx.arc(x,y,r*0.88,0,Math.PI*2); ctx.stroke();
+  ctx.fillStyle='white'; const bw=r*1.4,bh=r*0.45;
+  ctx.beginPath(); ctx.roundRect(x-bw/2,y-bh/2,bw,bh,bh*0.3); ctx.fill(); ctx.restore();
 }
-
-// ─── Helper: OK glow ──────────────────────────────────────────────────────────
-function drawOKGlow(ctx, block, t){
-  const pulse = Math.sin(t*0.015)*0.5+0.5;
-  ctx.save();
-  ctx.shadowColor = `rgba(0,220,60,${0.6+pulse*0.4})`;
-  ctx.shadowBlur  = 18 + pulse*10;
-  ctx.strokeStyle = `rgba(0,200,50,${0.7+pulse*0.3})`;
-  ctx.lineWidth   = 3;
-  ctx.beginPath();
-  ctx.roundRect(block.x-3, block.y-3, block.width+6, block.height+6, 6);
-  ctx.stroke();
-  ctx.restore();
+function drawOKGlow(ctx,block,t){
+  const pulse=Math.sin(t*0.015)*0.5+0.5; ctx.save();
+  ctx.shadowColor=`rgba(0,220,60,${0.6+pulse*0.4})`; ctx.shadowBlur=18+pulse*10;
+  ctx.strokeStyle=`rgba(0,200,50,${0.7+pulse*0.3})`; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.roundRect(block.x-3,block.y-3,block.width+6,block.height+6,6); ctx.stroke(); ctx.restore();
 }
-
-// ─── canCalc rules ────────────────────────────────────────────────────────────
-function canCalc(a, b, mode){
-  if(mode==='+')   return a.num + b.num <= 100;
-  if(mode==='-')   return Math.abs(a.num - b.num) >= 1;
-  if(mode==='x')   return a.num * b.num <= 100;
-  if(mode==='div'){
-    const lg=Math.max(a.num,b.num), sm=Math.min(a.num,b.num);
-    return sm>=1 && lg%sm===0 && lg!==sm;
-  }
+function canCalc(a,b,m){
+  if(m==='+')   return a.num+b.num<=100;
+  if(m==='-')   return Math.abs(a.num-b.num)>=1;
+  if(m==='x')   return a.num*b.num<=100;
+  if(m==='div'){ const lg=Math.max(a.num,b.num),sm=Math.min(a.num,b.num); return sm>=1&&lg%sm===0; }
   return false;
 }
 
-// ─── Puzzle class ─────────────────────────────────────────────────────────────
+// ─── Puzzle class（4択クイズ）────────────────────────────────────────────────
 class Puzzle {
-  constructor(draggedBlock, targetBlock, calcMode){
-    this.calcMode = calcMode;
-    let n1, n2, ans;
-    if(calcMode==='+'){
-      n1=draggedBlock.num; n2=targetBlock.num; ans=n1+n2;
+  constructor(draggedBlock,targetBlock,calcMode){
+    this.calcMode=calcMode;
+    let n1,n2,ans;
+    if(calcMode==='+'){      n1=draggedBlock.num; n2=targetBlock.num; ans=n1+n2;
     } else if(calcMode==='-'){
-      n1=Math.max(draggedBlock.num,targetBlock.num);
-      n2=Math.min(draggedBlock.num,targetBlock.num);
-      ans=n1-n2;
+      n1=Math.max(draggedBlock.num,targetBlock.num); n2=Math.min(draggedBlock.num,targetBlock.num); ans=n1-n2;
     } else if(calcMode==='x'){
       n1=draggedBlock.num; n2=targetBlock.num; ans=n1*n2;
-    } else { // div
-      n1=Math.max(draggedBlock.num,targetBlock.num);
-      n2=Math.min(draggedBlock.num,targetBlock.num);
-      ans=n1/n2;
+    } else {
+      n1=Math.max(draggedBlock.num,targetBlock.num); n2=Math.min(draggedBlock.num,targetBlock.num); ans=n1/n2;
     }
     this.n1=n1; this.n2=n2; this.ans=ans;
-    this.mergeX = (draggedBlock.x + targetBlock.x)/2;
-    this.mergeY = (draggedBlock.y + targetBlock.y)/2;
+    this.mergeX=(draggedBlock.x+targetBlock.x)/2;
+    this.char1=new NumberBlock(n1,0,0); this.char2=new NumberBlock(n2,0,0);
+    this.charRes=new NumberBlock(Math.max(1,Math.round(ans)),0,0);
+    this.choices=this._genChoices(ans);
+    this.eliminated=new Set();
+    this.wrongFlash=0; this.wrongChoiceIdx=null; // 誤答演出
+    this.phase='countdown'; // 'countdown'|'correct'|'timeout'|'done'
+    this.elapsed=0; this.COUNTDOWN=5000; this.CORRECT_ANIM=2000;
+    this.particles=[];
+  }
 
-    this.char1 = new NumberBlock(n1,0,0);
-    this.char2 = new NumberBlock(n2,0,0);
-    this.charRes = new NumberBlock(Math.max(1,Math.round(ans)),0,0);
+  _genChoices(ans){
+    const wrongs=new Set();
+    const diffs=ans<=10?[1,2,3,-1,-2,-3,4,-4]:ans<=30?[1,2,5,-1,-2,-5,3,-3]:[2,5,10,-2,-5,-10,3,-3];
+    for(const d of diffs){ const v=ans+d; if(v>=1&&v<=100&&v!==ans) wrongs.add(v); if(wrongs.size>=3) break; }
+    for(let i=1;wrongs.size<3&&i<=20;i++) if(ans+i>=1&&ans+i<=100) wrongs.add(ans+i);
+    // 昇順にソート
+    return [ans,...[...wrongs].slice(0,3)].sort((a,b)=>a-b);
+  }
 
-    this.phase = 'countdown'; // 'countdown' | 'reveal' | 'done'
-    this.elapsed = 0;
-    this.COUNTDOWN = 4500;
-    this.REVEAL    = 2500;
-    this.particles = [];
-    this.confettiSpawned = false;
+  tapChoice(idx){
+    if(this.phase!=='countdown') return;
+    if(this.eliminated.has(idx)) return;
+    if(this.choices[idx]===this.ans){
+      this.phase='correct'; this.elapsed=0;
+      for(let i=0;i<70;i++) this.particles.push(new Particle(sw/2,sh/2));
+    } else {
+      this.eliminated.add(idx); this.elapsed=0;
+      this.wrongFlash=500; this.wrongChoiceIdx=idx; // 誤答フラッシュ
+    }
   }
 
   update(dt){
-    this.elapsed += dt;
-    if(this.phase==='countdown' && this.elapsed>=this.COUNTDOWN){
-      this.phase='reveal';
-      this.elapsed=0;
-      if(!this.confettiSpawned){
-        this.confettiSpawned=true;
-        for(let i=0;i<50;i++) this.particles.push(new Particle(sw/2, sh/2));
-      }
-    } else if(this.phase==='reveal' && this.elapsed>=this.REVEAL){
-      this.phase='done';
-    }
+    this.elapsed+=dt; this.wrongFlash=Math.max(0,this.wrongFlash-dt);
+    if(this.phase==='countdown'&&this.elapsed>=this.COUNTDOWN) this.phase='timeout';
+    else if(this.phase==='correct'&&this.elapsed>=this.CORRECT_ANIM) this.phase='done';
     for(const p of this.particles) p.update();
-    this.particles = this.particles.filter(p=>p.life>0);
+    this.particles=this.particles.filter(p=>p.life>0);
   }
 
-  draw(ctx, t){
-    // dark overlay
-    ctx.fillStyle='rgba(0,0,0,0.72)';
-    ctx.fillRect(0,0,sw,sh);
+  _panelRect(){
+    const pw=Math.min(sw-24,520), ph=Math.min(sh-60,480);
+    return {px:(sw-pw)/2,py:(sh-ph)/2,pw,ph};
+  }
 
-    const pw = Math.min(sw-24, 520);
-    const ph = Math.min(sh-100, 440);
-    const px = (sw-pw)/2;
-    const py = (sh-ph)/2;
+  // 表示中の選択肢の座標（昇順ソート済み）
+  _getChoiceRects(){
+    const {px,py,pw,ph}=this._panelRect();
+    const visible=[0,1,2,3].filter(i=>!this.eliminated.has(i));
+    if(!visible.length) return [];
+    const btnH=48,gap=8,totalW=pw-40,btnW=(totalW-(visible.length-1)*gap)/visible.length;
+    const choiceY=py+ph-btnH-14;
+    return visible.map((idx,pos)=>({idx,x:px+20+pos*(btnW+gap),y:choiceY,w:btnW,h:btnH}));
+  }
 
-    // gradient border
-    const grad = ctx.createLinearGradient(px,py,px+pw,py+ph);
-    grad.addColorStop(0,'#f80');
-    grad.addColorStop(0.5,'#e00');
-    grad.addColorStop(1,'#80f');
-    ctx.save();
-    ctx.beginPath();
-    ctx.roundRect(px-3,py-3,pw+6,ph+6,20);
-    ctx.fillStyle=grad;
-    ctx.fill();
-    ctx.restore();
+  _opStr(){ return {'+':'+','-':'−','x':'×','div':'÷'}[this.calcMode]||'?'; }
 
-    // white panel
-    ctx.fillStyle='white';
-    ctx.beginPath();
-    ctx.roundRect(px,py,pw,ph,16);
-    ctx.fill();
+  draw(ctx,t){
+    const {px,py,pw,ph}=this._panelRect();
+    ctx.fillStyle='rgba(0,0,0,0.72)'; ctx.fillRect(0,0,sw,sh);
+    const grad=ctx.createLinearGradient(px,py,px+pw,py+ph);
+    grad.addColorStop(0,'#f80'); grad.addColorStop(0.5,'#e00'); grad.addColorStop(1,'#80f');
+    ctx.save(); ctx.beginPath(); ctx.roundRect(px-3,py-3,pw+6,ph+6,20); ctx.fillStyle=grad; ctx.fill(); ctx.restore();
+    ctx.fillStyle='white'; ctx.beginPath(); ctx.roundRect(px,py,pw,ph,16); ctx.fill();
 
-    // content
-    if(this.calcMode==='x'){
-      this._drawMultiply(ctx, t, px, py, pw, ph);
+    if(this.phase==='correct'){
+      this._drawCorrectAnim(ctx,t,px,py,pw,ph);
     } else {
-      this._drawStandard(ctx, t, px, py, pw, ph);
+      this._drawQuestion(ctx,t,px,py,pw,ph);
+      this._drawCountdownBar(ctx,px,py,pw,ph);
+      this._drawChoiceButtons(ctx);
     }
-
-    // countdown bar
-    if(this.phase==='countdown'){
-      const prog = Math.max(0, 1 - this.elapsed/this.COUNTDOWN);
-      const bw=pw-40, bh=14;
-      const bx=px+20, by=py+ph-28;
-      ctx.fillStyle='#ddd';
-      ctx.beginPath(); ctx.roundRect(bx,by,bw,bh,7); ctx.fill();
-      const hue = prog*120; // 120=green, 0=red
-      ctx.fillStyle=`hsl(${hue},80%,45%)`;
-      ctx.beginPath(); ctx.roundRect(bx,by,bw*prog,bh,7); ctx.fill();
-    }
-
-    // confetti
     for(const p of this.particles) p.draw(ctx);
-  }
 
-  _opStr(){
-    if(this.calcMode==='+') return '+';
-    if(this.calcMode==='-') return '−';
-    if(this.calcMode==='x') return '×';
-    return '÷';
-  }
-
-  _drawStandard(ctx, t, px, py, pw, ph){
-    const cy = py + ph*0.18;
-    const c1 = this.char1, c2 = this.char2;
-
-    // bounce
-    const b1Y = Math.sin(this.elapsed*0.003)*6;
-    const b2Y = Math.sin(this.elapsed*0.003 + Math.PI)*6;
-
-    const opStr = this._opStr();
-    const spacing = 24;
-    const opW = 28;
-    const totalW = c1.width + spacing + opW + spacing + c2.width + spacing + 32;
-    let cx = (sw - totalW)/2;
-
-    c1.x=cx; c1.y=cy;
-    c1.draw(ctx, t, b1Y);
-    cx += c1.width + spacing;
-
-    ctx.save();
-    ctx.font='bold 30px sans-serif';
-    ctx.textAlign='center';
-    ctx.textBaseline='middle';
-    ctx.fillStyle='#444';
-    ctx.fillText(opStr, cx+opW/2, cy+c1.height/2);
-    ctx.restore();
-    cx += opW + spacing;
-
-    c2.x=cx; c2.y=cy;
-    c2.draw(ctx, t, b2Y);
-    cx += c2.width + spacing;
-
-    ctx.save();
-    ctx.font='bold 30px sans-serif';
-    ctx.textAlign='center';
-    ctx.textBaseline='middle';
-    ctx.fillStyle='#444';
-    ctx.fillText('=', cx+14, cy+c1.height/2);
-    ctx.restore();
-    cx += 28 + spacing;
-
-    if(this.phase==='reveal' || this.phase==='done'){
-      const cr = this.charRes;
-      cr.x=cx; cr.y=cy;
-      cr.draw(ctx, t, 0);
-    } else {
+    // 誤答演出：赤フラッシュ＋✗
+    if(this.wrongFlash>0){
+      const alpha=(this.wrongFlash/500)*0.42;
       ctx.save();
-      ctx.font='bold 48px sans-serif';
-      ctx.textAlign='center';
-      ctx.textBaseline='middle';
-      ctx.fillStyle='#e44';
-      ctx.fillText('?', cx+16, cy+c1.height/2);
+      ctx.fillStyle=`rgba(220,20,20,${alpha})`;
+      ctx.beginPath(); ctx.roundRect(px,py,pw,ph,16); ctx.fill();
+      ctx.font=`bold ${Math.round(ph*0.28)}px sans-serif`;
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillStyle=`rgba(255,0,0,${Math.min(1,alpha*3)})`;
+      ctx.fillText('✗',px+pw/2,py+ph*0.45);
       ctx.restore();
     }
   }
 
-  _drawMultiply(ctx, t, px, py, pw, ph){
-    const n1=this.n1, n2=this.n2;
-    const opStr=this._opStr();
+  _drawQuestion(ctx,t,px,py,pw,ph){
+    ctx.save(); ctx.font='bold 22px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top'; ctx.fillStyle='#333';
+    ctx.fillText(`${this.n1} ${this._opStr()} ${this.n2} = ?`,px+pw/2,py+12); ctx.restore();
+    if(this.calcMode==='x') this._drawMultiplyGrid(ctx,t,px,py,pw,ph);
+    else this._drawCharPair(ctx,t,px,py,pw,ph);
+  }
 
-    // label at top
-    ctx.save();
-    ctx.font='bold 22px sans-serif';
-    ctx.textAlign='center';
-    ctx.textBaseline='top';
-    ctx.fillStyle='#333';
-    const qOrAns = (this.phase==='reveal'||this.phase==='done') ? String(this.ans) : '?';
-    ctx.fillText(`${n1} ${opStr} ${n2} = ${qOrAns}`, px+pw/2, py+12);
-    ctx.restore();
+  _drawCharPair(ctx,t,px,py,pw,ph){
+    const c1=this.char1,c2=this.char2;
+    // 下揃え：選択肢＋バー分（92px）を除いたエリアの底に合わせる
+    const contentBottom=py+ph-92;
+    const b1Y=Math.sin(this.elapsed*0.003)*5, b2Y=Math.sin(this.elapsed*0.003+Math.PI)*5;
+    const opW=30,gap=14,totalW=c1.width+gap+opW+gap+c2.width;
+    let cx=(sw-totalW)/2;
+    c1.x=cx; c1.y=contentBottom-c1.height; c1.draw(ctx,t,b1Y); cx+=c1.width+gap;
+    const maxH=Math.max(c1.height,c2.height);
+    ctx.save(); ctx.font='bold 28px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle='#444';
+    ctx.fillText(this._opStr(),cx+opW/2,contentBottom-maxH/2); ctx.restore(); cx+=opW+gap;
+    c2.x=cx; c2.y=contentBottom-c2.height; c2.draw(ctx,t,b2Y);
+  }
 
-    // n1 copies of n2-block in rows, max 10 per row
-    const cols = Math.min(10, n1);
-    const rows = Math.ceil(n1/cols);
-    const blockW = this.char2.width;
-    const blockH = this.char2.height;
-    const gapX = 6, gapY = 16;
-    const bounce = Math.sin(this.elapsed*0.003)*4;
-    const totalRowW = cols*(blockW+gapX)-gapX;
-    const startX = px + (pw-totalRowW)/2;
-    const startY = py + 54;
-
+  _drawMultiplyGrid(ctx,t,px,py,pw,ph){
+    const n1=this.n1,n2=this.n2,blockW=this.char2.width,blockH=this.char2.height;
+    const cols=Math.min(10,n1),rows=Math.ceil(n1/cols),gapX=6,gapY=10;
+    const totalRowW=cols*(blockW+gapX)-gapX;
+    // 下揃え
+    const contentBottom=py+ph-92;
+    const gridH=rows*(blockH+gapY)-gapY;
+    const startX=px+(pw-totalRowW)/2, startY=contentBottom-gridH;
+    const bounce=Math.sin(this.elapsed*0.003)*4;
     for(let i=0;i<n1;i++){
-      const col=i%cols, row=Math.floor(i/cols);
-      const bx=startX+col*(blockW+gapX);
-      const by=startY+row*(blockH+gapY);
-      const nb = new NumberBlock(n2, bx, by);
-      nb.draw(ctx, t, bounce);
+      const col=i%cols,row=Math.floor(i/cols);
+      const nb=new NumberBlock(n2,startX+col*(blockW+gapX),startY+row*(blockH+gapY));
+      nb.draw(ctx,t,bounce);
     }
+  }
 
-    if(this.phase==='reveal'||this.phase==='done'){
-      const cr=this.charRes;
-      cr.x=px+(pw-cr.width)/2;
-      cr.y=py+ph-cr.height-42;
-      cr.draw(ctx,t,0);
+  _drawCountdownBar(ctx,px,py,pw,ph){
+    const prog=Math.max(0,1-this.elapsed/this.COUNTDOWN);
+    const bw=pw-40,bh=12,bx=px+20,by=py+ph-78;
+    ctx.fillStyle='#ddd'; ctx.beginPath(); ctx.roundRect(bx,by,bw,bh,6); ctx.fill();
+    ctx.fillStyle=`hsl(${prog*120},80%,45%)`; ctx.beginPath(); ctx.roundRect(bx,by,bw*prog,bh,6); ctx.fill();
+  }
+
+  _drawChoiceButtons(ctx){
+    const rects=this._getChoiceRects();
+    for(const r of rects){
+      ctx.save(); ctx.fillStyle='rgba(50,100,240,0.9)';
+      ctx.beginPath(); ctx.roundRect(r.x,r.y,r.w,r.h,10); ctx.fill();
+      ctx.fillStyle='white'; ctx.font='bold 24px sans-serif';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(String(this.choices[r.idx]),r.x+r.w/2,r.y+r.h/2);
+      ctx.restore();
     }
+  }
+
+  _drawCorrectAnim(ctx,t,px,py,pw,ph){
+    ctx.save(); ctx.font='bold 40px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top'; ctx.fillStyle='#080';
+    ctx.fillText('正解！',px+pw/2,py+12); ctx.restore();
+    const cr=this.charRes, bounce=Math.sin(this.elapsed*0.01)*10;
+    cr.x=px+(pw-cr.width)/2; cr.y=py+(ph-cr.height)/2-10; cr.draw(ctx,t,bounce);
+    ctx.save(); ctx.font='bold 20px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='bottom'; ctx.fillStyle='#333';
+    ctx.fillText(`${this.n1} ${this._opStr()} ${this.n2} = ${this.ans}`,px+pw/2,py+ph-12); ctx.restore();
   }
 }
 
-// ─── Calc mode state (+, -, x, div) ──────────────────────────────────────────
-let blocks     = [];
-let puzzle     = null;
-let particles  = [];
-let dragBlock  = null;
-let dragOffX   = 0, dragOffY = 0;
-let dragPointers = {}; // pointerId -> {x,y,offX,offY,block}
-let lastTapBlock = null, lastTapTime = 0;
-let walkTime = 0;
-
-function calcFloor(){
-  return sh - GH - PAD_H - 12;
-}
+// ─── Game state ───────────────────────────────────────────────────────────────
+let blocks=[], puzzle=null, dragBlock=null, dragPointers={};
+let lastTapBlock=null, lastTapTime=0, walkTime=0;
 
 function applyPhysics(){
   for(const b of blocks){
     if(b===dragBlock) continue;
-    const dx = b.targetX - b.x;
-    if(Math.abs(dx)>1){
-      b.vx = dx>0?2:-2;
-    } else {
-      b.vx=0; b.x=b.targetX;
-    }
-    b.vy += GRAVITY;
-    b.x  += b.vx;
-    b.y  += b.vy;
-    const fl = calcFloor() - b.height;
-    if(b.y>=fl){ b.y=fl; b.vy=0; b.onGround=true; }
-    else { b.onGround=false; }
+    const dx=b.targetX-b.x;
+    if(Math.abs(dx)>1){ b.vx=dx>0?2:-2; } else { b.vx=0; b.x=b.targetX; }
+    b.vy+=GRAVITY; b.x+=b.vx; b.y+=b.vy;
+    const fl=calcFloor()-b.height;
+    if(b.y>=fl){ b.y=fl; b.vy=0; b.onGround=true; } else b.onGround=false;
     if(b.x<0) b.x=0;
     if(b.x+b.width>sw) b.x=sw-b.width;
   }
 }
 
 function updateTargets(){
-  if(!blocks.length) return;
-  const sorted = [...blocks].sort((a,b)=>a.num-b.num);
-  const total  = sorted.reduce((s,b)=>s+b.width,0)+(sorted.length-1)*20;
-  let cx = Math.max(20,(sw-total)/2);
-  for(const b of sorted){
-    b.targetX=cx;
-    cx+=b.width+20;
-  }
+  const sorted=[...blocks].sort((a,b)=>a.num-b.num);
+  const total=sorted.reduce((s,b)=>s+b.width,0)+(sorted.length-1)*16;
+  let cx=Math.max(14,(sw-total)/2);
+  for(const b of sorted){ b.targetX=cx; cx+=b.width+16; }
 }
 
 function spawnBlock(num){
-  const x = sw/2 + (Math.random()-0.5)*100;
-  const b = new NumberBlock(num, x, TAB_H+20);
-  blocks.push(b);
+  blocks.push(new NumberBlock(num,sw/2+(Math.random()-0.5)*100,TAB_H+20));
   updateTargets();
 }
 
+function setBlockSize(k){
+  if(bsKey===k) return; bsKey=k; BS=BS_MAP[k];
+  for(const b of blocks) b._computeShape();
+  updateTargets();
+}
+
+// ─── Formula display ──────────────────────────────────────────────────────────
 function drawFormula(ctx){
-  if(blocks.length<2) return;
+  if(!blocks.length) return;
   const sorted=[...blocks].sort((a,b)=>a.num-b.num);
   const nums=sorted.map(b=>b.num);
   let formula='';
   if(mode==='+') formula=nums.join(' + ')+' = '+nums.reduce((a,v)=>a+v,0);
-  else formula=nums.join(', ');
-  ctx.save();
-  ctx.font='bold 16px sans-serif';
-  ctx.textAlign='center';
-  ctx.textBaseline='middle';
-  const ty = TAB_H+16;
-  ctx.strokeStyle='white'; ctx.lineWidth=4;
-  ctx.strokeText(formula, sw/2, ty);
-  ctx.fillStyle='#111';
-  ctx.fillText(formula, sw/2, ty);
-  ctx.restore();
+  else if(mode==='-'&&nums.length===2){ const big=Math.max(...nums),sm=Math.min(...nums); formula=`${big} − ${sm} = ${big-sm}`; }
+  else if(mode==='x'&&nums.length===2) formula=`${nums[0]} × ${nums[1]} = ${nums[0]*nums[1]}`;
+  else if(mode==='div'&&nums.length===2){ const big=Math.max(...nums),sm=Math.min(...nums); if(sm>=1&&big%sm===0) formula=`${big} ÷ ${sm} = ${big/sm}`; }
+  if(!formula) formula=nums.join(', ');
+  const ty=TAB_H+16;
+  ctx.save(); ctx.font='bold 16px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.strokeStyle='white'; ctx.lineWidth=4; ctx.strokeText(formula,sw/2,ty);
+  ctx.fillStyle='#111'; ctx.fillText(formula,sw/2,ty); ctx.restore();
+}
+
+// ─── Numpad ───────────────────────────────────────────────────────────────────
+function getNumpadLayout(){
+  const padH=getPadH(),padY=sh-padH;
+  const items=[
+    {label:'1',val:1},{label:'2',val:2},{label:'3',val:3},{label:'4',val:4},
+    {label:'5',val:5},{label:'6',val:6},{label:'7',val:7},{label:'8',val:8},
+    {label:'9',val:9},{label:'10',val:10},
+    {label:'R',val:'R',color:'#5a9'},{label:'CLR',val:'CLR',color:'#c55'}
+  ];
+  if(isLandscape()){
+    const btnH=padH-12,btnW=Math.min(Math.floor((sw-10)/items.length)-2,70);
+    return items.map((item,i)=>({...item,x:5+i*(btnW+2),y:padY+6,w:btnW,h:btnH}));
+  }
+  const btnH=36,col6W=Math.min(Math.floor((sw-10)/6)-2,58);
+  return [
+    ...items.slice(0,6).map((item,i)=>({...item,x:5+i*(col6W+2),y:padY+8,w:col6W,h:btnH})),
+    ...items.slice(6).map((item,i)=>({...item,x:5+i*(col6W+2),y:padY+52,w:col6W,h:btnH}))
+  ];
 }
 
 function drawNumpad(ctx){
-  const padY = sh - PAD_H;
-  ctx.fillStyle='rgba(0,0,0,0.15)';
-  ctx.fillRect(0,padY,sw,PAD_H);
-
-  const nums=[1,2,3,4,5,6,7,8,9,10];
-  const cols=6;
-  const btnW=Math.min(Math.floor((sw-10)/cols)-2,58);
-  const btnH=36;
-  const row1Y=padY+10;
-  const row2Y=padY+54;
-  const btns=[];
-
-  for(let i=0;i<6;i++)
-    btns.push({label:String(nums[i]),x:5+i*(btnW+2),y:row1Y,w:btnW,h:btnH,val:nums[i]});
-  for(let i=0;i<4;i++)
-    btns.push({label:String(nums[6+i]),x:5+i*(btnW+2),y:row2Y,w:btnW,h:btnH,val:nums[6+i]});
-  btns.push({label:'R',x:5+4*(btnW+2),y:row2Y,w:btnW,h:btnH,val:'R',color:'#5a9'});
-  btns.push({label:'CLR',x:5+5*(btnW+2),y:row2Y,w:btnW,h:btnH,val:'CLR',color:'#c55'});
-
-  for(const b of btns){
-    ctx.save();
-    ctx.fillStyle=b.color||'rgba(80,80,180,0.9)';
+  const padH=getPadH(),padY=sh-padH;
+  ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.fillRect(0,padY,sw,padH);
+  for(const b of getNumpadLayout()){
+    ctx.save(); ctx.fillStyle=b.color||'rgba(80,80,180,0.9)';
     ctx.beginPath(); ctx.roundRect(b.x,b.y,b.w,b.h,8); ctx.fill();
-    ctx.fillStyle='white';
-    ctx.font='bold 15px sans-serif';
-    ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillText(b.label,b.x+b.w/2,b.y+b.h/2);
+    ctx.fillStyle='white'; ctx.font='bold 15px sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(b.label,b.x+b.w/2,b.y+b.h/2);
     ctx.restore();
   }
-
-  // ALIGN button top-left (below tabs)
-  ctx.save();
-  ctx.fillStyle='rgba(100,180,255,0.9)';
-  ctx.beginPath(); ctx.roundRect(6,TAB_H+4,70,28,8); ctx.fill();
-  ctx.fillStyle='white';
-  ctx.font='bold 13px sans-serif';
-  ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.fillText('ALIGN',41,TAB_H+4+14);
-  ctx.restore();
-
-  return btns;
 }
 
-function getNumpadBtns(){
-  const padY=sh-PAD_H;
-  const nums=[1,2,3,4,5,6,7,8,9,10];
-  const btnW=Math.min(Math.floor((sw-10)/6)-2,58);
-  const btnH=36;
-  const row1Y=padY+10;
-  const row2Y=padY+54;
-  const btns=[];
-  for(let i=0;i<6;i++)
-    btns.push({label:String(nums[i]),x:5+i*(btnW+2),y:row1Y,w:btnW,h:btnH,val:nums[i]});
-  for(let i=0;i<4;i++)
-    btns.push({label:String(nums[6+i]),x:5+i*(btnW+2),y:row2Y,w:btnW,h:btnH,val:nums[6+i]});
-  btns.push({label:'R',x:5+4*(btnW+2),y:row2Y,w:btnW,h:btnH,val:'R'});
-  btns.push({label:'CLR',x:5+5*(btnW+2),y:row2Y,w:btnW,h:btnH,val:'CLR'});
-  btns.push({label:'ALIGN',x:6,y:TAB_H+4,w:70,h:28,val:'ALIGN'});
-  return btns;
-}
-
-// ─── Factor mode state ────────────────────────────────────────────────────────
-let factorVal = 12;
-let factorReveal = {}; // rowIndex -> bool
-let factorBlocks = []; // [{num, blocks:[NumberBlock], targetY}]
-let factorT = 0;
-
-const factorUI  = document.getElementById('factor-ui');
-const factorNum = document.getElementById('factor-num');
-const factorRange = document.getElementById('factor-range');
+// ─── Factor mode ──────────────────────────────────────────────────────────────
+let factorVal=12, factorReveal={}, factorBlocks=[], factorBS=10;
+const factorUI=document.getElementById('factor-ui');
+const factorNum=document.getElementById('factor-num');
+const factorRange=document.getElementById('factor-range');
 
 function buildFactorRows(n){
-  factorReveal = {};
-  factorBlocks = [];
-  const divisors = [];
+  factorReveal={}; factorBlocks=[];
+  // 分母ごとのrows数をBS=1で取得してfactorBSを計算
+  const divisors=[];
   for(let d=1;d<=n;d++) if(n%d===0) divisors.push(d);
-  // each divisor => row of blocks: m copies of d-block
-  for(let ri=0;ri<divisors.length;ri++){
-    const d=divisors[ri];
-    const m=n/d;
-    const row=[];
+  const savedBS=BS;
+  BS=1;
+  const rowCounts=divisors.map(d=>{ const tmp=new NumberBlock(d,0,0); return tmp.rows; });
+  BS=savedBS;
+  const avail=sh-TAB_H-FACTOR_H-8;
+  const totalBlockRows=rowCounts.reduce((s,r)=>s+r,0);
+  // factorBS × totalBlockRows + 12 × numRows ≤ avail
+  factorBS=Math.max(4,Math.min(BS,Math.floor((avail-12*divisors.length)/Math.max(1,totalBlockRows))));
+  // blocksをfactorBSで生成
+  BS=factorBS;
+  divisors.forEach((d,ri)=>{
+    const m=n/d,row=[];
     for(let bi=0;bi<m;bi++){
-      const nb=new NumberBlock(d,0,0);
-      // start off-screen left
-      nb.x=-nb.width-20;
-      nb.y=0;
-      nb.targetX=0;
-      row.push(nb);
+      const nb=new NumberBlock(d,0,0); nb.x=-nb.width-20; nb.y=0; row.push(nb);
     }
-    factorBlocks.push({d,m,L:n,blocks:row});
-  }
-}
-
-function getFactorRowY(ri, rowH){
-  return TAB_H + 8 + ri*rowH;
+    factorBlocks.push({d,m,L:n,blocks:row,rowH:Math.max(36,row[0].height+12)});
+  });
+  BS=savedBS;
 }
 
 function updateFactorTargets(){
-  const rowH = 72;
-  const labelW = 90;
-  const gapX = 4;
-  for(let ri=0;ri<factorBlocks.length;ri++){
-    const row=factorBlocks[ri];
-    const ry=getFactorRowY(ri, rowH);
+  const savedBS=BS; BS=factorBS;
+  const labelW=90,gapX=4; let curY=TAB_H+8;
+  for(const row of factorBlocks){
     for(let bi=0;bi<row.blocks.length;bi++){
-      const nb=row.blocks[bi];
-      nb.targetX = labelW + bi*(nb.width+gapX);
-      nb.y = ry + (rowH - nb.height)/2;
+      const nb=row.blocks[bi]; nb.targetX=labelW+bi*(nb.width+gapX); nb.y=curY+(row.rowH-nb.height)/2;
     }
+    curY+=row.rowH;
   }
+  BS=savedBS;
 }
 
 function lerpFactorBlocks(){
-  for(const row of factorBlocks){
-    for(const nb of row.blocks){
-      nb.x += (nb.targetX - nb.x)*0.12;
-    }
-  }
+  for(const row of factorBlocks) for(const nb of row.blocks) nb.x+=(nb.targetX-nb.x)*0.12;
 }
 
-function drawFactorMode(ctx, t){
-  const rowH = 72;
-  const avail = sh - TAB_H - FACTOR_H - 8;
-  ctx.fillStyle='rgba(0,0,0,0.12)';
-  ctx.fillRect(0,TAB_H,sw,avail);
-
+function drawFactorMode(ctx,t){
+  const savedBS=BS; BS=factorBS;
+  let curY=TAB_H+8;
   for(let ri=0;ri<factorBlocks.length;ri++){
-    const row=factorBlocks[ri];
-    const ry=getFactorRowY(ri, rowH);
-    if(ry+rowH > sh-FACTOR_H) break;
-
-    // row bg
+    const row=factorBlocks[ri],rowH=row.rowH;
+    if(curY+rowH>sh-FACTOR_H) break;
     ctx.fillStyle=ri%2===0?'rgba(255,255,255,0.09)':'rgba(255,255,255,0.04)';
-    ctx.fillRect(0,ry,sw,rowH);
-
-    // label: d×m=L
-    ctx.save();
-    ctx.font='bold 14px sans-serif';
-    ctx.textAlign='left';
-    ctx.textBaseline='middle';
-    ctx.fillStyle='white';
-    ctx.fillText(`${row.d}×${row.m}=${row.L}`, 6, ry+rowH/2);
-    ctx.restore();
-
-    // draw blocks
-    for(const nb of row.blocks){
-      nb.draw(ctx, t, 0);
-    }
-
-    // right button: L÷d=?
-    const btnW=sw-row.blocks.length*(row.blocks[0]?.width+4||26)-95-6;
-    const revX=sw-btnW-6;
+    ctx.fillRect(0,curY,sw,rowH);
+    ctx.save(); ctx.font='bold 14px sans-serif'; ctx.textAlign='left'; ctx.textBaseline='middle'; ctx.fillStyle='white';
+    ctx.fillText(`${row.d}×${row.m}=${row.L}`,6,curY+rowH/2); ctx.restore();
+    for(const nb of row.blocks) nb.draw(ctx,t,0);
+    const bw=row.blocks[0]?.width||factorBS;
+    const btnW=Math.max(70,sw-row.blocks.length*(bw+4)-95-6),revX=sw-btnW-6;
     const revealed=!!factorReveal[ri];
-    ctx.save();
-    ctx.fillStyle=revealed?'rgba(80,200,80,0.85)':'rgba(200,200,200,0.3)';
-    ctx.beginPath();
-    ctx.roundRect(revX,ry+10,Math.max(btnW,70),rowH-20,8);
-    ctx.fill();
-    ctx.font='bold 13px sans-serif';
-    ctx.textAlign='center';
-    ctx.textBaseline='middle';
-    ctx.fillStyle='#111';
-    const ans=revealed?String(row.m):'?';
-    ctx.fillText(`${row.L}÷${row.d}=${ans}`, revX+Math.max(btnW,70)/2, ry+rowH/2);
-    ctx.restore();
+    ctx.save(); ctx.fillStyle=revealed?'rgba(80,200,80,0.85)':'rgba(200,200,200,0.3)';
+    ctx.beginPath(); ctx.roundRect(revX,curY+8,btnW,rowH-16,8); ctx.fill();
+    ctx.font='bold 13px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle='#111';
+    ctx.fillText(`${row.L}÷${row.d}=${revealed?String(row.m):'?'}`,revX+btnW/2,curY+rowH/2); ctx.restore();
+    curY+=rowH;
   }
+  BS=savedBS;
 }
 
-function handleFactorTap(x, y){
-  const rowH=72;
+function handleFactorTap(x,y){
+  let curY=TAB_H+8;
   for(let ri=0;ri<factorBlocks.length;ri++){
-    const ry=getFactorRowY(ri, rowH);
-    if(ry+rowH>sh-FACTOR_H) break;
-    const row=factorBlocks[ri];
-    const btnW=sw-row.blocks.length*(row.blocks[0]?.width+4||26)-95-6;
-    const revX=sw-btnW-6;
-    if(ptInRect(x,y,revX,ry+10,Math.max(btnW,70),rowH-20)){
-      factorReveal[ri]=!factorReveal[ri];
-      return;
-    }
+    const row=factorBlocks[ri],rowH=row.rowH;
+    if(curY+rowH>sh-FACTOR_H) break;
+    const bw=row.blocks[0]?.width||factorBS;
+    const btnW=Math.max(70,sw-row.blocks.length*(bw+4)-95-6),revX=sw-btnW-6;
+    if(ptInRect(x,y,revX,curY+8,btnW,rowH-16)){ factorReveal[ri]=!factorReveal[ri]; return; }
+    curY+=rowH;
   }
 }
 
 factorRange.addEventListener('input',()=>{
-  factorVal=parseInt(factorRange.value,10);
-  factorNum.textContent=String(factorVal);
-  buildFactorRows(factorVal);
-  updateFactorTargets();
-  factorReveal={};
+  factorVal=parseInt(factorRange.value,10); factorNum.textContent=String(factorVal);
+  buildFactorRows(factorVal); updateFactorTargets(); factorReveal={};
 });
 
 // ─── Background ───────────────────────────────────────────────────────────────
 function drawBG(ctx){
   const grad=ctx.createLinearGradient(0,0,0,sh);
-  grad.addColorStop(0,'#a0d2ff');
-  grad.addColorStop(1,'#d2eeff');
-  ctx.fillStyle=grad;
-  ctx.fillRect(0,0,sw,sh);
-  const groundY = sh - GH - (mode==='factor'?FACTOR_H:PAD_H);
-  ctx.fillStyle='rgb(160,230,160)';
-  ctx.fillRect(0,groundY,sw,GH);
+  grad.addColorStop(0,'#a0d2ff'); grad.addColorStop(1,'#d2eeff');
+  ctx.fillStyle=grad; ctx.fillRect(0,0,sw,sh);
+  const groundY=sh-GH-(mode==='factor'?FACTOR_H:getPadH());
+  ctx.fillStyle='rgb(160,230,160)'; ctx.fillRect(0,groundY,sw,GH);
 }
 
 // ─── Hit test ─────────────────────────────────────────────────────────────────
 function ptInRect(px,py,x,y,w,h){ return px>=x&&px<=x+w&&py>=y&&py<=y+h; }
-
-function blockHit(b, x, y){
-  return ptInRect(x, y,
-    b.x-14, b.y-20,
-    b.width+28, b.height+34
-  );
-}
-
-// ─── getPos ───────────────────────────────────────────────────────────────────
-function getPos(e, t){
+function blockHit(b,x,y){ return ptInRect(x,y,b.x-14,b.y-20,b.width+28,b.height+34); }
+function getPos(e,t){
   const rect=canvas.getBoundingClientRect();
-  const scaleX=sw/rect.width, scaleY=sh/rect.height;
-  return {
-    x:(t.clientX-rect.left)*scaleX,
-    y:(t.clientY-rect.top)*scaleY
-  };
+  return {x:(t.clientX-rect.left)*(sw/rect.width),y:(t.clientY-rect.top)*(sh/rect.height)};
 }
 
-// ─── Calc mode event handlers ─────────────────────────────────────────────────
-function handleCalcStart(x, y, pid){
-  if(puzzle) return;
-  // numpad
-  const btns=getNumpadBtns();
-  for(const b of btns){
+// ─── Event handlers ───────────────────────────────────────────────────────────
+function handleStart(x,y,pid){
+  for(const sb of sizeBtns){ if(ptInRect(x,y,sb.x,sb.y,sb.w,sb.h)){ setBlockSize(sb.val); return; } }
+  for(const tb of tabBtns){ if(ptInRect(x,y,tb.x,tb.y,tb.w,tb.h)){ setMode(tb.val); return; } }
+  if(mode==='factor'){ handleFactorTap(x,y); return; }
+  if(puzzle){
+    if(puzzle.phase==='countdown'){
+      for(const r of puzzle._getChoiceRects()){ if(ptInRect(x,y,r.x,r.y,r.w,r.h)){ puzzle.tapChoice(r.idx); return; } }
+    }
+    return;
+  }
+  for(const b of getNumpadLayout()){
     if(ptInRect(x,y,b.x,b.y,b.w,b.h)){
-      if(b.val==='R') spawnBlock(1+Math.floor(Math.random()*100));
+      if(b.val==='R') spawnBlock(Math.floor(Math.random()*100)+1);
       else if(b.val==='CLR'){ blocks=[]; updateTargets(); }
-      else if(b.val==='ALIGN') updateTargets();
       else spawnBlock(Number(b.val));
       return;
     }
   }
-  // hit blocks
   for(let i=blocks.length-1;i>=0;i--){
     const b=blocks[i];
     if(blockHit(b,x,y)){
       const now=Date.now();
-      if(b===lastTapBlock && now-lastTapTime<400){
-        blocks.splice(i,1);
-        lastTapBlock=null;
-        updateTargets();
-        return;
-      }
+      if(b===lastTapBlock&&now-lastTapTime<400){ blocks.splice(i,1); lastTapBlock=null; updateTargets(); return; }
       lastTapBlock=b; lastTapTime=now;
       dragPointers[pid]={x,y,offX:x-b.x,offY:y-b.y,block:b};
-      dragBlock=b;
-      blocks.splice(i,1); blocks.push(b);
-      return;
+      dragBlock=b; blocks.splice(i,1); blocks.push(b); return;
     }
   }
 }
 
-function handleCalcMove(x, y, pid){
-  const ptr=dragPointers[pid];
-  if(!ptr) return;
-  const b=ptr.block;
-  b.vx=x-ptr.x; b.vy=y-ptr.y;
-  b.x=x-ptr.offX;
-  b.y=y-ptr.offY;
-  ptr.x=x; ptr.y=y;
+function handleMove(x,y,pid){
+  const ptr=dragPointers[pid]; if(!ptr) return;
+  const b=ptr.block; b.vx=x-ptr.x; b.vy=y-ptr.y; b.x=x-ptr.offX; b.y=y-ptr.offY; ptr.x=x; ptr.y=y;
 }
 
-function handleCalcEnd(x, y, pid){
-  const ptr=dragPointers[pid];
-  if(!ptr){ dragBlock=null; return; }
-  const b=ptr.block;
-  delete dragPointers[pid];
-  dragBlock=null;
-
-  // check for merge with nearest valid block
-  let best=null, bestD=Infinity;
+function handleEnd(x,y,pid){
+  const ptr=dragPointers[pid]; if(!ptr){ dragBlock=null; return; }
+  const b=ptr.block; delete dragPointers[pid]; dragBlock=null;
+  let best=null,bestD=Infinity;
   for(const other of blocks){
     if(other===b) continue;
-    const d=Math.hypot(b.cx-other.cx, b.cy-other.cy);
-    if(d<80 && d<bestD){ bestD=d; best=other; }
+    const d=Math.hypot(b.cx-other.cx,b.cy-other.cy);
+    if(d<80&&canCalc(b,other,mode)&&d<bestD){ bestD=d; best=other; }
   }
-  if(best){
-    if(canCalc(b, best, mode)){
-      blocks=blocks.filter(bl=>bl!==b&&bl!==best);
-      puzzle=new Puzzle(b, best, mode);
-    }
-  }
+  if(best){ blocks=blocks.filter(bl=>bl!==b&&bl!==best); puzzle=new Puzzle(b,best,mode); }
   updateTargets();
 }
 
 // ─── Mode switching ───────────────────────────────────────────────────────────
-function setMode(m){
-  mode=m;
-  blocks=[];
-  puzzle=null;
-  particles=[];
-  dragBlock=null;
-  dragPointers={};
-  factorUI.classList.toggle('visible', m==='factor');
-  if(m==='factor'){
-    buildFactorRows(factorVal);
-    updateFactorTargets();
-    factorReveal={};
-  } else {
-    updateTargets();
-  }
+function setMode(newMode){
+  const wasCalc=mode!=='factor',willBeCalc=newMode!=='factor';
+  if(!wasCalc||!willBeCalc) blocks=[];
+  mode=newMode; puzzle=null; dragBlock=null; dragPointers={};
+  factorUI.classList.toggle('visible',newMode==='factor');
+  if(newMode==='factor'){ buildFactorRows(factorVal); updateFactorTargets(); factorReveal={}; }
+  updateTargets();
 }
 
-// ─── Touch/Mouse events ───────────────────────────────────────────────────────
-canvas.addEventListener('touchstart', e=>{
-  e.preventDefault();
-  for(const t of e.changedTouches){
-    const {x,y}=getPos(e,t);
-    const pid=t.identifier;
-    // tabs
-    let hitTab=false;
-    for(const tb of tabBtns){
-      if(ptInRect(x,y,tb.x,tb.y,tb.w,tb.h)){ setMode(tb.val); hitTab=true; break; }
-    }
-    if(hitTab) continue;
-    if(mode==='factor') handleFactorTap(x,y);
-    else handleCalcStart(x,y,pid);
-  }
-},{passive:false});
-
-canvas.addEventListener('touchmove', e=>{
-  e.preventDefault();
-  for(const t of e.changedTouches){
-    const {x,y}=getPos(e,t);
-    const pid=t.identifier;
-    if(mode!=='factor') handleCalcMove(x,y,pid);
-  }
-},{passive:false});
-
-canvas.addEventListener('touchend', e=>{
-  e.preventDefault();
-  for(const t of e.changedTouches){
-    const {x,y}=getPos(e,t);
-    const pid=t.identifier;
-    if(mode!=='factor') handleCalcEnd(x,y,pid);
-  }
-},{passive:false});
+// ─── Touch / Mouse ────────────────────────────────────────────────────────────
+canvas.addEventListener('touchstart',e=>{ e.preventDefault(); for(const t of e.changedTouches){ const {x,y}=getPos(e,t); handleStart(x,y,t.identifier); } },{passive:false});
+canvas.addEventListener('touchmove', e=>{ e.preventDefault(); for(const t of e.changedTouches){ const {x,y}=getPos(e,t); handleMove(x,y,t.identifier); } },{passive:false});
+canvas.addEventListener('touchend',  e=>{ e.preventDefault(); for(const t of e.changedTouches){ const {x,y}=getPos(e,t); handleEnd(x,y,t.identifier); } },{passive:false});
 
 let mouseDown=false;
-canvas.addEventListener('mousedown', e=>{
-  mouseDown=true;
-  const rect=canvas.getBoundingClientRect();
-  const x=(e.clientX-rect.left)*(sw/rect.width);
-  const y=(e.clientY-rect.top)*(sh/rect.height);
-  let hitTab=false;
-  for(const tb of tabBtns){
-    if(ptInRect(x,y,tb.x,tb.y,tb.w,tb.h)){ setMode(tb.val); hitTab=true; break; }
-  }
-  if(!hitTab){
-    if(mode==='factor') handleFactorTap(x,y);
-    else handleCalcStart(x,y,'mouse');
-  }
-});
-canvas.addEventListener('mousemove', e=>{
-  if(!mouseDown) return;
-  const rect=canvas.getBoundingClientRect();
-  const x=(e.clientX-rect.left)*(sw/rect.width);
-  const y=(e.clientY-rect.top)*(sh/rect.height);
-  if(mode!=='factor') handleCalcMove(x,y,'mouse');
-});
-canvas.addEventListener('mouseup', e=>{
-  if(!mouseDown) return;
-  mouseDown=false;
-  const rect=canvas.getBoundingClientRect();
-  const x=(e.clientX-rect.left)*(sw/rect.width);
-  const y=(e.clientY-rect.top)*(sh/rect.height);
-  if(mode!=='factor') handleCalcEnd(x,y,'mouse');
-});
+canvas.addEventListener('mousedown',e=>{ mouseDown=true; const rect=canvas.getBoundingClientRect(); handleStart((e.clientX-rect.left)*(sw/rect.width),(e.clientY-rect.top)*(sh/rect.height),'mouse'); });
+canvas.addEventListener('mousemove',e=>{ if(!mouseDown) return; const rect=canvas.getBoundingClientRect(); handleMove((e.clientX-rect.left)*(sw/rect.width),(e.clientY-rect.top)*(sh/rect.height),'mouse'); });
+canvas.addEventListener('mouseup',  e=>{ if(!mouseDown) return; mouseDown=false; const rect=canvas.getBoundingClientRect(); handleEnd((e.clientX-rect.left)*(sw/rect.width),(e.clientY-rect.top)*(sh/rect.height),'mouse'); });
 
 // ─── Main loop ────────────────────────────────────────────────────────────────
 let lastTime=0;
-
 function loop(ts){
-  const dt=Math.min(ts-lastTime,100);
-  lastTime=ts;
-  walkTime+=dt;
-
-  ctx.clearRect(0,0,sw,sh);
-  drawBG(ctx);
-  tabBtns=drawTabs(ctx);
-
+  const dt=Math.min(ts-lastTime,100); lastTime=ts; walkTime+=dt;
+  ctx.clearRect(0,0,sw,sh); drawBG(ctx); drawTabsAndUI(ctx);
   if(mode==='factor'){
-    lerpFactorBlocks();
-    drawFactorMode(ctx, walkTime);
+    lerpFactorBlocks(); drawFactorMode(ctx,walkTime);
   } else {
-    // calc modes
-    if(!puzzle){
-      applyPhysics();
-
-      // draw blocks
-      for(const b of blocks){
-        if(b===dragBlock) continue;
-        b.draw(ctx, walkTime, 0);
+    if(puzzle){
+      puzzle.update(dt);
+      if(puzzle.phase==='timeout'||puzzle.phase==='done'){
+        blocks.push(new NumberBlock(puzzle.charRes.num,puzzle.mergeX,TAB_H+20));
+        puzzle=null; updateTargets();
+      } else {
+        puzzle.draw(ctx,walkTime);
       }
-
-      // drag block + overlays
+    } else {
+      applyPhysics();
+      for(const b of blocks){ if(b===dragBlock) continue; b.draw(ctx,walkTime,0); }
       if(dragBlock){
-        for(const other of blocks){
-          if(other===dragBlock) continue;
-          const d=Math.hypot(dragBlock.cx-other.cx, dragBlock.cy-other.cy);
-          if(d<120){
-            if(canCalc(dragBlock,other,mode)){
-              drawOKGlow(ctx, other, walkTime);
-            } else {
-              drawNoEntry(ctx, other.cx, other.y-28, 22);
-            }
+        let bestMerge=null,bestMergeD=Infinity;
+        for(const o of blocks){
+          if(o===dragBlock) continue;
+          const d=Math.hypot(dragBlock.cx-o.cx,dragBlock.cy-o.cy);
+          if(d<80&&canCalc(dragBlock,o,mode)&&d<bestMergeD){ bestMergeD=d; bestMerge=o; }
+        }
+        for(const o of blocks){
+          if(o===dragBlock) continue;
+          const d=Math.hypot(dragBlock.cx-o.cx,dragBlock.cy-o.cy);
+          if(d<100){
+            if(o===bestMerge) drawOKGlow(ctx,o,walkTime);
+            else if(!canCalc(dragBlock,o,mode)) drawNoEntry(ctx,o.cx,o.y-28,22);
           }
         }
-        dragBlock.draw(ctx, walkTime, 0);
+        dragBlock.draw(ctx,walkTime,0);
       }
-
       drawFormula(ctx);
       drawNumpad(ctx);
-    } else {
-      puzzle.update(dt);
-      puzzle.draw(ctx, walkTime);
-      if(puzzle.phase==='done'){
-        // spawn result block
-        const nb=new NumberBlock(puzzle.charRes.num, puzzle.mergeX, TAB_H+20);
-        blocks.push(nb);
-        puzzle=null;
-        updateTargets();
-      }
     }
   }
-
   requestAnimationFrame(loop);
 }
 
