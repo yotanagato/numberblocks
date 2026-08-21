@@ -1,0 +1,12 @@
+# 公開しないもの（サイトの動作には不要）
+
+# Wiki から採取した説明文・確定JSON
+data/
+# 旧 Python(pygame) 版
+bak/
+# 一時的なアップロード用フォルダ
+_publish/
+# 手元で流す変換スクリプト（Node）
+apply-overrides.js
+# 手元のバックアップ
+*.BAK
