@@ -8,6 +8,25 @@
     * { margin:0; padding:0; box-sizing:border-box; }
     body { background:#000; overflow:hidden; touch-action:none; }
     canvas { display:block; }
+    #fs-btn {
+      position:fixed; top:6px; right:6px; z-index:20;
+      width:36px; height:36px; border-radius:8px;
+      background:rgba(0,0,0,0.45); border:1.5px solid rgba(255,255,255,0.35);
+      color:white; font-size:18px; cursor:pointer;
+      display:flex; align-items:center; justify-content:center;
+      transition:background 0.15s;
+    }
+    #fs-btn:hover { background:rgba(60,60,60,0.75); }
+    /* ずかん（キャラメイク）へ行き来するボタン。フルスクリーンの左隣 */
+    #zukan-btn {
+      position:fixed; top:6px; right:48px; z-index:20;
+      height:36px; padding:0 12px; border-radius:8px;
+      background:rgba(0,0,0,0.45); border:1.5px solid rgba(255,255,255,0.35);
+      color:white; font-size:13px; font-weight:700; cursor:pointer;
+      display:flex; align-items:center; justify-content:center;
+      text-decoration:none; transition:background 0.15s;
+    }
+    #zukan-btn:hover { background:rgba(60,60,60,0.75); }
     #factor-ui {
       display:none; position:fixed;
       bottom:0; left:0; right:0; height:115px;
@@ -22,27 +41,20 @@
 </head>
 <body>
 <canvas id="c"></canvas>
+<a id="zukan-btn" href="zukan.html" title="ずかん・キャラメイクへ">ずかん</a>
+<button id="fs-btn" title="フルスクリーン">⛶</button>
 <div id="factor-ui">
   <div id="factor-num">12</div>
   <input type="range" id="factor-range" min="1" max="100" value="12">
 </div>
+<!-- キャラの見た目（かたち・色・顔・手足）は共通エンジンが担当する。
+     キャラメイクツール（zukan.html）と同じファイルを読むので、
+     あちらでデザインを直せばこのゲームにも自動的に反映される。
+     ※ roundRect のポリフィルもこの中にある -->
+<!-- 陽太さんの確定ぶん（自動生成）。エンジンより先に読ませる -->
+<script src="overrides.js"></script>
+<script src="engine.js"></script>
 <script>
-// ─── roundRect polyfill ───────────────────────────────────────────────────────
-if (!CanvasRenderingContext2D.prototype.roundRect) {
-  CanvasRenderingContext2D.prototype.roundRect = function(x,y,w,h,r){
-    if(typeof r==='number') r=[r,r,r,r];
-    else if(r.length===1) r=[r[0],r[0],r[0],r[0]];
-    else if(r.length===2) r=[r[0],r[1],r[0],r[1]];
-    else if(r.length===3) r=[r[0],r[1],r[2],r[1]];
-    this.moveTo(x+r[0],y);
-    this.lineTo(x+w-r[1],y); this.arcTo(x+w,y,x+w,y+r[1],r[1]);
-    this.lineTo(x+w,y+h-r[2]); this.arcTo(x+w,y+h,x+w-r[2],y+h,r[2]);
-    this.lineTo(x+r[3],y+h); this.arcTo(x,y+h,x,y+h-r[3],r[3]);
-    this.lineTo(x,y+r[0]); this.arcTo(x,y,x+r[0],y,r[0]);
-    this.closePath(); return this;
-  };
-}
-
 // ─── Canvas setup ─────────────────────────────────────────────────────────────
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
@@ -52,29 +64,22 @@ window.addEventListener('resize', resize);
 resize();
 
 // ─── Constants / size ────────────────────────────────────────────────────────
-const BS_MAP = { S:16, M:22, L:28 };
+const BS_MAP = { S:20, M:40, L:60 };
 let bsKey = 'M';
 let BS = BS_MAP[bsKey];
 const GRAVITY  = 0.4;
 const GH       = 50;
 const TAB_H    = 38;
 const FACTOR_H = 115;
+const MAX_BLOCKS = 30;   // 同時に置けるキャラの数
 
 function isLandscape(){ return sw > sh * 1.2; }
 function getPadH(){ return isLandscape() ? 56 : 110; }
 function calcFloor(){ return sh - GH - (mode==='factor' ? FACTOR_H : getPadH()) - 12; }
 
 // ─── Colors ───────────────────────────────────────────────────────────────────
-const COLORS = {
-  1:[222,21,29], 2:[232,146,35], 3:[230,196,12], 4:[56,181,0],
-  5:[35,176,219], 6:[90,53,195], 7:[186,121,221], 8:[255,0,100],
-  9:[180,180,180], 10:[255,255,255], 20:[255,228,181], 30:[255,255,200],
-  40:[144,238,144], 50:[175,238,238], 60:[150,100,200], 80:[255,150,200],
-  90:[180,180,180]
-};
-const RAINBOW = [[222,21,29],[232,146,35],[230,196,12],[56,181,0],[35,176,219],[90,53,195],[186,121,221]];
-const PASTEL_RAINBOW = [[255,180,180],[255,220,180],[255,255,180],[180,255,180],[180,255,255],[180,180,255],[220,180,255]];
-function rgb(a){ return `rgb(${a[0]},${a[1]},${a[2]})`; }
+// キャラの配色（DIGIT_COLORS / RAINBOW など）と rgb() は共通エンジン側にある。
+// ここで再定義すると同名の const がぶつかって動かなくなるので置かない。
 
 // ─── Tabs & Size buttons ──────────────────────────────────────────────────────
 let mode = '+';
@@ -108,7 +113,7 @@ function drawTabsAndUI(ctx){
   const szW=26, szH=TAB_H-8;
   sizeBtns = [];
   ['S','M','L'].forEach((k,i)=>{
-    const bx=sw-3*(szW+2)+i*(szW+2)-2, by=4, active=bsKey===k;
+    const bx=2+i*(szW+2), by=4, active=bsKey===k;
     ctx.save();
     ctx.fillStyle=active?'rgba(255,180,0,0.95)':'rgba(50,50,50,0.8)';
     ctx.beginPath(); ctx.roundRect(bx,by,szW,szH,5); ctx.fill();
@@ -121,6 +126,9 @@ function drawTabsAndUI(ctx){
 }
 
 // ─── NumberBlock ──────────────────────────────────────────────────────────────
+// 見た目（かたち・色・顔・手足）は共通エンジン engine.js が担当する。
+// このクラスは、ゲームの物理演算・ドラッグ・レイアウトに必要な当たり判定の
+// 箱（x/y/width/height）と速度だけを持ち、描画はエンジンへ丸投げする。
 let blockIdCounter = 0;
 class NumberBlock {
   constructor(num,x,y){
@@ -129,93 +137,22 @@ class NumberBlock {
     this._computeShape();
   }
   _computeShape(){
-    const n=this.num;
-    if(n===100){ this.cols=10; this.rows=10; }
-    else if(n===90){ this.cols=9; this.rows=10; }
-    else if([4,9,16,25,36,49,64,81].includes(n)){ const s=Math.round(Math.sqrt(n)); this.cols=s; this.rows=s; }
-    else if(n>=31&&n<=99){ this.cols=Math.ceil(n/10); this.rows=10; }
-    else if(n===30){ this.cols=3; this.rows=10; }
-    else if(n>=21&&n<=29){ this.cols=3; this.rows=10; }
-    else if(n===20){ this.cols=2; this.rows=10; }
-    else if(n>=11&&n<=19){ this.cols=2; this.rows=10; }
-    else { this.cols=1; this.rows=n; }
+    // かたちはエンジンの blockSpec が正。ここはその外形サイズを写すだけ
+    const spec = blockSpec(this.num);
+    this.cols = spec.cols; this.rows = spec.rows;
     this.width=this.cols*BS; this.height=this.rows*BS;
   }
   get cx(){ return this.x+this.width/2; }
   get cy(){ return this.y+this.height/2; }
-  _blockPos(i){
-    const n=this.num,cols=this.cols,rows=this.rows; let ix,iy;
-    if(n===100||[4,9,16,25,36,49,64,81].includes(n)){ ix=i%cols; iy=rows-1-Math.floor(i/cols); }
-    else if(n===90||n%10===0){ ix=Math.floor(i/10); iy=9-(i%10); }
-    else if(n>=21&&n<=29){ if(i<20){ ix=i%2; iy=9-Math.floor(i/2); } else { ix=2; iy=9-(i-20); } }
-    else if(n===20){ ix=i%2; iy=9-Math.floor(i/2); }
-    else if(n>=11&&n<=19){ if(i<10){ ix=0; iy=9-i; } else { ix=1; iy=9-(i-10); } }
-    else if(n>30){ const tl=Math.floor(n/10)*10; if(i<tl){ ix=Math.floor(i/10); iy=9-(i%10); } else { ix=cols-1; iy=9-(i-tl); } }
-    else { ix=0; iy=rows-1-i; }
-    return {ix,iy};
-  }
-  _blockColor(i){
-    const n=this.num;
-    if(n===100){ const {ix,iy}=this._blockPos(i); return (ix+iy)%2===0?[255,180,180]:[255,50,50]; }
-    const {ix}=this._blockPos(i);
-    if(Math.floor(n/10)*10===70&&i<70) return PASTEL_RAINBOW[ix%7];
-    if(n%10===7&&n!==7&&i>=Math.floor(n/10)*10) return RAINBOW[(i-Math.floor(n/10)*10)%7];
-    if(n===7) return RAINBOW[i%7];
-    const tens=Math.floor(n/10)*10;
-    if(i<tens&&tens>0&&COLORS[tens]) return COLORS[tens];
-    return COLORS[n%10]||[150,150,150];
-  }
   draw(ctx,t=0,bounceY=0){
     const n=this.num,x=this.x,y=this.y+bounceY;
     const isMoving=Math.abs(this.vx)>0.5||Math.abs(this.vy)>1.0;
-    this._drawLimbs(ctx,t,isMoving,x,y);
-    for(let i=0;i<n;i++){
-      const {ix,iy}=this._blockPos(i);
-      const bx=x+ix*BS,by=y+iy*BS,col=this._blockColor(i);
-      ctx.fillStyle=rgb(col); ctx.beginPath(); ctx.roundRect(bx+1,by+1,BS-2,BS-2,3); ctx.fill();
-      const tens=Math.floor(n/10)*10; let bCol='rgba(0,0,0,0.22)',bLw=0.5;
-      if(tens>0&&i<tens){ if(tens===10){bCol='rgba(220,0,0,0.85)';bLw=1.5;} else if(tens===20){bCol='rgba(255,140,0,0.85)';bLw=1.5;} }
-      ctx.strokeStyle=bCol; ctx.lineWidth=bLw; ctx.beginPath(); ctx.roundRect(bx+1,by+1,BS-2,BS-2,3); ctx.stroke();
-    }
-    this._drawFace(ctx,x,y);
+    drawNumberblock(ctx, n, x, y, BS, { t:t, animate:isMoving, numberling:false });
+    // 数字ラベルはゲーム側の見せ方（白フチ黒文字）を維持する
     ctx.save(); ctx.textAlign='center'; ctx.textBaseline='bottom'; ctx.font='bold '+Math.max(9,Math.round(BS*0.6))+'px sans-serif';
     ctx.strokeStyle='white'; ctx.lineWidth=3; ctx.strokeText(String(n),x+this.width/2,y-3);
     ctx.fillStyle='#111'; ctx.fillText(String(n),x+this.width/2,y-3);
     ctx.restore();
-  }
-  _drawLimbs(ctx,t,isMoving,x,y){
-    const w=this.width,h=this.height;
-    const ll=BS*0.65, ao=BS*0.46, ad=BS*0.37;
-    const legSwing=isMoving?Math.sin(t*0.009)*12:0;
-    const armSwing=isMoving?Math.sin(t*0.009+Math.PI)*10:0;
-    ctx.strokeStyle='rgba(80,40,0,0.8)'; ctx.lineWidth=Math.max(2,BS*0.13); ctx.lineCap='round';
-    ctx.beginPath(); ctx.moveTo(x+w*0.3,y+h); ctx.lineTo(x+w*0.3+legSwing,y+h+ll); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(x+w*0.7,y+h); ctx.lineTo(x+w*0.7-legSwing,y+h+ll); ctx.stroke();
-    const armY=y+Math.min(h*0.7,h-BS*0.45);
-    ctx.beginPath(); ctx.moveTo(x,armY); ctx.lineTo(x-ao,armY+ad+armSwing); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(x+w,armY); ctx.lineTo(x+w+ao,armY+ad-armSwing); ctx.stroke();
-  }
-  _drawFace(ctx,x,y){
-    const n=this.num,w=this.width,h=this.height;
-    const fx=(n>=20&&n!==100)?x+BS:x+w/2, fy=y+(n===1?h*0.5:h*0.25);
-    ctx.fillStyle='white'; ctx.strokeStyle='black'; ctx.lineWidth=1;
-    if(n===1){
-      ctx.beginPath(); ctx.arc(fx,fy,6,0,Math.PI*2); ctx.fill(); ctx.stroke();
-      ctx.fillStyle='black'; ctx.beginPath(); ctx.arc(fx,fy,2.5,0,Math.PI*2); ctx.fill();
-    } else if(n===20){
-      ctx.strokeStyle='purple'; ctx.lineWidth=1.5;
-      const ex1=x+BS*0.5,ex2=x+BS*1.5,ey=y+h*0.25;
-      ctx.beginPath(); ctx.moveTo(ex1,ey); ctx.lineTo(ex2,ey); ctx.stroke();
-      for(const ex of [ex1,ex2]){
-        ctx.beginPath(); ctx.arc(ex,ey,4,0,Math.PI*2); ctx.fillStyle='white'; ctx.fill(); ctx.strokeStyle='purple'; ctx.stroke();
-        ctx.fillStyle='black'; ctx.beginPath(); ctx.arc(ex,ey,1.5,0,Math.PI*2); ctx.fill();
-      }
-    } else {
-      for(const dx of [-6,6]){
-        ctx.beginPath(); ctx.arc(fx+dx,fy,3.5,0,Math.PI*2); ctx.fillStyle='white'; ctx.fill(); ctx.strokeStyle='black'; ctx.stroke();
-        ctx.fillStyle='black'; ctx.beginPath(); ctx.arc(fx+dx+0.5,fy+0.5,1.5,0,Math.PI*2); ctx.fill();
-      }
-    }
   }
 }
 
@@ -495,12 +432,32 @@ function applyPhysics(){
 
 function updateTargets(){
   const sorted=[...blocks].sort((a,b)=>a.num-b.num);
-  const total=sorted.reduce((s,b)=>s+b.width,0)+(sorted.length-1)*16;
-  let cx=Math.max(14,(sw-total)/2);
-  for(const b of sorted){ b.targetX=cx; cx+=b.width+16; }
+  if(!sorted.length) return;
+  // 数が増えると1列に収まらなくなるので、間隔を詰めて画面内に入れる。
+  // それでも足りないときは少しだけ重ねる（小さい数から順に並ぶので、
+  // 重なっても手前の大きい数が隠れてしまうことはない）。
+  const margin = 14;
+  const blocksW = sorted.reduce((s,b)=>s+b.width,0);
+  const avail   = sw - margin*2;
+  if(sorted.length === 1){ sorted[0].targetX = Math.max(margin, (sw-blocksW)/2); return; }
+
+  const gap = (avail - blocksW) / (sorted.length - 1);
+  if(gap >= 0){
+    // 余裕がある：すき間を最大16pxまでにして中央寄せ
+    const g = Math.min(16, gap);
+    const total = blocksW + g*(sorted.length-1);
+    let cx = Math.max(margin, (sw-total)/2);
+    for(const b of sorted){ b.targetX=cx; cx+=b.width+g; }
+  } else {
+    // 入りきらない：左右いっぱいに等間隔で置く（重なるが必ず画面内に収まる）
+    const last = sorted[sorted.length-1];
+    const step = (avail - last.width) / (sorted.length - 1);
+    sorted.forEach((b,i) => { b.targetX = margin + step*i; });
+  }
 }
 
 function spawnBlock(num){
+  if(blocks.length>=MAX_BLOCKS) return;
   blocks.push(new NumberBlock(num,sw/2+(Math.random()-0.5)*100,TAB_H+20));
   updateTargets();
 }
@@ -771,10 +728,96 @@ function loop(ts){
       }
       drawFormula(ctx);
       drawNumpad(ctx);
+      drawKeyInput(ctx, dt);
     }
   }
   requestAnimationFrame(loop);
 }
+
+// ─── キーボード召喚（デバッグ・確認用）────────────────────────────────────────
+// 数字を続けて打って Enter で、その数のキャラを出す（47 → 4,7,Enter）。
+// 特定のキャラをすぐ出せるので、見た目の確認に使う。
+//   数字      入力（画面左上に表示。3桁まで＝最大100）
+//   Enter     召喚
+//   Esc       入力を取り消す
+//   Backspace 1文字消す
+//   R         ランダムに1体（小さい数ほど出やすい）
+//   C / Delete 全部消す
+let keyInput = '';           // 入力中の数字（文字列）
+let keyFlash = 0;            // 入力できなかったときの赤い点滅（ms）
+function keySummon(){
+  const v = parseInt(keyInput, 10);
+  keyInput = '';
+  if(isNaN(v) || v < 1 || v > 100){ keyFlash = 600; return; }   // 1〜100 の外
+  if(blocks.length >= MAX_BLOCKS){ keyFlash = 600; return; }     // 置ける数の上限
+  spawnBlock(v);
+}
+document.addEventListener('keydown', e=>{
+  if(e.ctrlKey || e.metaKey || e.altKey) return;   // ブラウザのショートカットは邪魔しない
+  if(mode === 'factor') return;                    // 因数モードはスライダー操作なので対象外
+  if(puzzle) return;                               // クイズ中は入力を受けない
+  if(e.key >= '0' && e.key <= '9'){
+    if(keyInput.length < 3) keyInput += e.key;
+    e.preventDefault();
+  } else if(e.key === 'Enter'){
+    keySummon(); e.preventDefault();
+  } else if(e.key === 'Escape'){
+    keyInput = ''; e.preventDefault();
+  } else if(e.key === 'Backspace'){
+    keyInput = keyInput.slice(0, -1); e.preventDefault();
+  } else if(e.key === 'r' || e.key === 'R'){
+    // 小さい数ほど出やすくする（1 が最も出やすい）
+    let total = 0; const wts = [];
+    for(let i=1;i<=100;i++){ const wt = 101 - i; wts.push(wt); total += wt; }
+    let pick = Math.random() * total, num = 1;
+    for(let i=0;i<100;i++){ pick -= wts[i]; if(pick <= 0){ num = i+1; break; } }
+    if(blocks.length >= MAX_BLOCKS) keyFlash = 600; else spawnBlock(num);
+    e.preventDefault();
+  } else if(e.key === 'c' || e.key === 'C' || e.key === 'Delete'){
+    blocks = []; updateTargets(); e.preventDefault();
+  }
+});
+
+/** 入力中の数字を画面左上に出す（今なにを打っているか分かるように） */
+function drawKeyInput(ctx, dt){
+  keyFlash = Math.max(0, keyFlash - dt);
+  if(!keyInput && !keyFlash) return;
+  const label = keyInput || '×';
+  const bw = 96, bh = 44, bx = 6, by = TAB_H + 6;
+  ctx.save();
+  ctx.fillStyle = keyFlash > 0 ? 'rgba(200,30,30,0.88)' : 'rgba(0,0,0,0.62)';
+  ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 8); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 8); ctx.stroke();
+  ctx.fillStyle = 'white'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = 'bold 22px sans-serif';
+  ctx.fillText(label, bx + bw/2, by + bh/2 - 5);
+  ctx.font = '10px sans-serif';
+  ctx.fillText(keyFlash > 0 ? '出せません' : 'Enterで出す', bx + bw/2, by + bh - 9);
+  ctx.restore();
+}
+
+// ─── Fullscreen ───────────────────────────────────────────────────────────────
+const fsBtn = document.getElementById('fs-btn');
+function updateFsIcon(){ fsBtn.textContent = document.fullscreenElement ? '✕' : '⛶'; }
+fsBtn.addEventListener('click', ()=>{
+  if(!document.fullscreenElement) document.documentElement.requestFullscreen();
+  else document.exitFullscreen();
+});
+document.addEventListener('fullscreenchange', updateFsIcon);
+
+// ─── 図鑑での編集をその場で受け取る ───────────────────────────────────────────
+// zukan.html を別ウィンドウで開いて調整すると、共通エンジンが変更を検知して
+// ここを呼ぶ。かたちが変わるとブロックの縦横も変わるので、外形を計算し直して
+// 並べ直す（描画は毎フレーム行われるので、ここでは寸法の更新だけでよい）。
+onNumberblocksChanged(function(){
+  for(const b of blocks) b._computeShape();
+  updateTargets();
+  if(mode === 'factor'){
+    for(const row of factorBlocks) for(const nb of row.blocks) nb._computeShape();
+    updateFactorTargets();
+  }
+});
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 setMode('+');

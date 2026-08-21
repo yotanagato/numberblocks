@@ -1,0 +1,1437 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<title>ナンバーブロックス ずかん</title>
+<style>
+  /* ─────────────────────────────────────────────────────────────
+     基本スタイル（外部フォント・画像・CDN は一切使わない）
+     ───────────────────────────────────────────────────────────── */
+  *{ margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ height:100%; }
+  body{
+    background:#0d1422; color:#e9eefb;
+    font-family:"Hiragino Kaku Gothic ProN","Yu Gothic","Meiryo",system-ui,sans-serif;
+    overscroll-behavior:none;
+    /* ブラウザ既定のジェスチャ（ダブルタップ拡大など）を殺す。
+       ずかんは縦スクロールが必要なので、スクロール領域だけ pan-y を許可する */
+    touch-action:none;
+    user-select:none; -webkit-user-select:none;
+  }
+
+  /* ── ずかん画面 ── */
+  #zukanScreen{ position:fixed; inset:0; display:flex; flex-direction:column; }
+  #topbar{
+    flex:0 0 auto; padding:10px 12px calc(8px + env(safe-area-inset-top,0px));
+    padding-top:calc(10px + env(safe-area-inset-top,0px));
+    background:linear-gradient(180deg,#1b2740,#131c30);
+    border-bottom:1px solid #2a3550;
+    display:flex; align-items:center; gap:10px;
+  }
+  #topbar h1{ font-size:18px; letter-spacing:.04em; font-weight:800; }
+  #topbar .sub{ font-size:11px; color:#8ea1c8; }
+  /* ゲームへ行き来するボタン（右端に寄せる） */
+  #gameBtn{
+    margin-left:auto; flex:0 0 auto;
+    min-height:40px; padding:0 16px; border-radius:10px;
+    background:#26334f; color:#e9eefb; font-size:13px; font-weight:700;
+    display:flex; align-items:center; text-decoration:none; cursor:pointer;
+  }
+  #gameBtn:hover{ background:#3a6ee0; color:#fff; }
+  #zukanScroll{
+    flex:1 1 auto; overflow-y:auto; overflow-x:hidden;
+    touch-action:pan-y;             /* 縦スクロールだけ許可 */
+    -webkit-overflow-scrolling:touch;
+    padding:10px 8px calc(18px + env(safe-area-inset-bottom,0px));
+  }
+  /* 全マスを同じ固定サイズに正規化する。
+     （canvas に高さを与えないと canvas の固有アスペクト比が grid の行高を
+       決めてしまい、行ごとに高さが変わる／1 のマスが潰れる） */
+  #grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(84px,1fr));
+    grid-auto-rows:124px;
+    gap:8px;
+  }
+  .thumb{
+    position:relative; background:#18213a; border:1px solid #27314f; border-radius:12px;
+    height:124px; min-width:56px; overflow:hidden;
+    display:block; cursor:pointer;
+  }
+  .thumb:active{ background:#212d4c; }
+  .thumb canvas{
+    position:absolute; left:0; top:0; right:0; bottom:16px;
+    display:block; width:100%; height:calc(100% - 16px);
+  }
+  .thumb .lab{
+    position:absolute; left:0; right:0; bottom:2px; text-align:center;
+    font-size:11px; font-weight:700; color:#9fb2d8; letter-spacing:.02em;
+  }
+  .thumb .confirmMark{
+    display:none; position:absolute; top:3px; right:4px; width:16px; height:16px;
+    border-radius:50%; background:#2f7a4d; color:#fff; font-size:11px; font-weight:700;
+    line-height:16px; text-align:center;
+  }
+  .thumb .memoMark{
+    display:none; position:absolute; top:3px; left:4px; width:16px; height:16px;
+    border-radius:50%; background:#a86a13; color:#fff; font-size:10px; font-weight:700;
+    line-height:16px; text-align:center;
+  }
+
+  /* ── 詳細画面 ── */
+  #detailScreen{ position:fixed; inset:0; background:#0d1422; display:none; flex-direction:column; touch-action:none; }
+  #detailScreen.on{ display:flex; }
+  #detailBar{
+    flex:0 0 auto; display:flex; align-items:center; gap:8px;
+    padding:calc(8px + env(safe-area-inset-top,0px)) 8px 8px;
+    background:#131c30; border-bottom:1px solid #2a3550;
+  }
+  #detailTitle{ flex:1; font-size:20px; font-weight:800; text-align:center; }
+  /* detailBody：キャラ側(detailMain)と編集パネル(editPanel)を横並び／縦並びで
+     並べる。パネルは position:absolute にしない＝必ず自分の領域を確保するので
+     キャラに重ならない。 */
+  #detailBody{ flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
+  #detailMain{ flex:1 1 auto; min-height:0; min-width:0; display:flex; flex-direction:column; }
+  #detailStage{ flex:1 1 auto; position:relative; min-height:0; }
+  #detailCanvas{ display:block; width:100%; height:100%; }
+  .navbtn{
+    width:64px; height:64px; min-width:56px; min-height:56px;
+    border:none; border-radius:16px; background:#26334f; color:#e9eefb;
+    font-size:24px; font-weight:800; cursor:pointer;
+  }
+  .navbtn:active{ background:#38496f; }
+  .navbtn:disabled{ opacity:.3; }
+  /* 左右ではなく下の隅に置き、キャラの横幅を最大限使えるようにする */
+  #prevBtn{ position:absolute; left:10px;  bottom:10px; z-index:3; opacity:.9; }
+  #nextBtn{ position:absolute; right:10px; bottom:10px; z-index:3; opacity:.9; }
+  #detailInfo{
+    flex:0 0 auto; max-height:38vh; overflow-y:auto; touch-action:pan-y;
+    padding:10px 12px calc(14px + env(safe-area-inset-bottom,0px));
+    background:#131c30; border-top:1px solid #2a3550;
+  }
+  #badges{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
+  .badge{ font-size:12px; font-weight:700; padding:5px 10px; border-radius:999px; background:#26334f; color:#c9d7f5; }
+  .badge.on{ background:#3a6ee0; color:#fff; }
+  .badge.tri{ background:#2b3f8f; color:#fff; }
+  .badge.sq{ background:#1f7a4d; color:#fff; }
+  .badge.pr{ background:#a03a6a; color:#fff; }
+  .badge.sr{ background:#a86a13; color:#fff; }
+  .badge.e11{ background:#7a3ab0; color:#fff; }
+  #divList{ font-size:13px; color:#b9c8e8; line-height:1.7; }
+  #divList b{ color:#fff; }
+
+  /* ── 編集モード（普段は邪魔にならないよう小さなボタン1つだけ） ── */
+  #editBtn{
+    width:64px; height:44px; min-width:56px; border:none; border-radius:12px;
+    background:#26334f; color:#c9d7f5; font-size:13px; font-weight:700; cursor:pointer;
+  }
+  #editBtn.on{ background:#3a6ee0; color:#fff; }
+  /* パネルは detailMain の「兄弟」として自分の領域を確保する（重ならない）。
+     せまい画面＝下に縦積み、広い画面（860px以上）＝右に横並び。
+     かたち・調整は1つの #editPanel（.sidePanel）にまとめ、両方を同時に見ながら
+     編集できるようにする（以前は排他表示の別パネルだった）。 */
+  .sidePanel{
+    display:none; flex:0 0 auto; overflow-y:auto; touch-action:pan-y;
+    max-height:45vh;
+    background:#101a2e; border-top:2px solid #3a6ee0;
+    padding:10px 12px calc(12px + env(safe-area-inset-bottom,0px));
+    box-shadow:0 -8px 24px rgba(0,0,0,.5);
+  }
+  .sidePanel.on{ display:block; }
+  @media (min-width:860px){
+    #detailBody{ flex-direction:row; }
+    /* プレビュー｜かたち｜調整(前半)｜調整(後半) をそれぞれ約 700 / 500 / 650 / 650px
+       の実寸で並べる（画面幅いっぱいに比率で伸ばすのではなく、各カラムに
+       直接その幅を持たせる。画面が広ければ右に余白が残ってよい）。
+       .sidePanel 自体は中の #editCols（500+650+650px）に合わせて中身の幅で
+       決まる（flex-grow:0）。 */
+    #detailMain{ flex:0 1 700px; min-width:260px; }
+    .sidePanel{
+      flex:0 1 auto; max-height:none; height:100%; min-width:340px;
+      border-top:none; border-left:2px solid #3a6ee0;
+      box-shadow:-8px 0 24px rgba(0,0,0,.5);
+    }
+  }
+  .tuneHead{ display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+  .tuneHead b{ font-size:15px; }
+  .tuneX{ width:56px; height:40px; border:none; border-radius:10px; background:#26334f; color:#e9eefb; font-size:16px; cursor:pointer; }
+  .tuneCatHead{
+    margin:14px 0 4px; padding-bottom:3px; font-size:12px; font-weight:700;
+    color:#7d8bab; border-bottom:1px solid #2a3550; letter-spacing:.05em;
+  }
+  .tuneCatHead:first-child{ margin-top:2px; }
+  /* かたち／調整(前半)／調整(後半) をそれぞれ約 500px／650px／650px の実寸で3列に。
+     十分広い画面だけ横並びにし、それより狭い間は1列ずつ縦積みにフォールバック
+     する（detailMain と合わせて4カラムを狙うのは 1200px 以上を想定）。 */
+  #editCols{ display:grid; grid-template-columns:1fr; gap:16px; align-items:start; }
+  @media (min-width:1200px){
+    #editCols{ grid-template-columns:500px 650px 650px; }
+  }
+  .editSection{
+    background:#0d1626; border:1px solid #22304f; border-radius:12px;
+    padding:12px; min-width:0;
+  }
+  .editSectionHead{ font-size:15px; font-weight:700; color:#fff; margin-bottom:8px; }
+  .editCaption{ font-size:11px; color:#7d8bab; line-height:1.6; margin:6px 0; }
+  #editConfirm.on{ background:#3a6ee0; }
+  .tuneRow{ display:flex; align-items:center; gap:8px; margin:2px 0; }
+  .tuneRow label{ flex:0 0 108px; font-size:12px; color:#9fb2d8; }
+  .tuneRow input[type=range]{ flex:1 1 auto; height:40px; accent-color:#3a6ee0; touch-action:pan-x; }
+  .tuneRow .val{ flex:0 0 52px; text-align:right; font-size:12px; font-variant-numeric:tabular-nums; color:#fff; }
+  .tuneBtns{ display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+  .tuneBtns button{
+    min-height:44px; padding:0 14px; border:none; border-radius:10px;
+    background:#26334f; color:#e9eefb; font-size:13px; font-weight:700; cursor:pointer;
+  }
+  #bulkCopy{ background:#2f7a4d; }
+  .tuneBtns button.on{ background:#3a6ee0; color:#fff; }
+  #bulkJson{
+    width:100%; height:80px; margin-bottom:4px; padding:8px; border-radius:8px;
+    border:1px solid #2a3550; background:#0a1120; color:#c9d7f5;
+    font-family:ui-monospace,Consolas,monospace; font-size:11px; line-height:1.5;
+    user-select:text; -webkit-user-select:text;
+  }
+  #editMemo{
+    flex:1 1 auto; min-height:64px; padding:8px; border-radius:8px;
+    border:1px solid #2a3550; background:#0f1830; color:#e9eefb;
+    font-size:13px; line-height:1.5; resize:vertical;
+  }
+</style>
+</head>
+<body>
+
+<!-- ずかん画面 -->
+<div id="zukanScreen">
+  <div id="topbar">
+    <div>
+      <h1>ナンバーブロックス ずかん</h1>
+      <div class="sub">1 〜 100 ／ タップでくわしく</div>
+    </div>
+    <a id="gameBtn" href="index.html" title="ゲームへ">ゲーム</a>
+  </div>
+  <div id="zukanScroll"><div id="grid"></div></div>
+</div>
+
+<!-- 詳細画面 -->
+<div id="detailScreen">
+  <div id="detailBar">
+    <button class="navbtn" id="closeBtn" aria-label="もどる">✕</button>
+    <div id="detailTitle">1</div>
+    <button id="editBtn" title="かたち・調整をまとめて編集">編集</button>
+  </div>
+
+  <!-- キャラ表示側とパネル側を横並び（広い画面）／縦並び（せまい画面）にする。
+       パネルは position:absolute ではなく通常のフレックス要素にして、
+       キャラに重ならず必ず自分の領域を確保する。 -->
+  <div id="detailBody">
+    <div id="detailMain">
+      <div id="detailStage">
+        <canvas id="detailCanvas"></canvas>
+        <button class="navbtn" id="prevBtn" aria-label="まえ">◀</button>
+        <button class="navbtn" id="nextBtn" aria-label="つぎ">▶</button>
+      </div>
+      <div id="detailInfo">
+        <div id="badges"></div>
+        <div id="divList"></div>
+      </div>
+    </div>
+
+    <!-- 編集パネル（かたち・調整をまとめた1画面。普段は非表示） -->
+    <div id="editPanel" class="sidePanel">
+      <div class="tuneHead">
+        <b id="editTitle">1 を編集</b>
+        <button id="editClose" class="tuneX">✕</button>
+      </div>
+      <div class="tuneRow" style="margin-bottom:2px;">
+        <button id="editConfirm" style="flex:1 1 auto;background:#2f7a4d;">☐ このキャラは完成にする</button>
+      </div>
+      <p class="editCaption">チェックを入れると①ずかんに完成マーク（✓）が付く　②このキャラの設定だけを1つのファイルに書き出す、の2つが起こります。もう一度押すと①のマークだけ取り消せます（書き出し済みのファイルは残ります）。今表示中のこのキャラだけが対象で、他のキャラには影響しません。</p>
+
+      <div class="tuneRow" style="align-items:flex-start;margin-bottom:2px;">
+        <label style="flex:0 0 108px;font-size:12px;color:#9fb2d8;padding-top:8px;">メモ</label>
+        <textarea id="editMemo" placeholder="既存の項目で対応できない調整・変更の要望があれば、ここにメモ（自動保存されます）"></textarea>
+      </div>
+      <p class="editCaption">このキャラだけのメモです。「全キャラぶんJSON」に一緒に出力されるので、まとめて陽太さんから渡してもらえればそれを見て対応します。</p>
+
+      <div class="tuneRow" id="editSaveDirRow" style="margin-bottom:2px;">
+        <span id="editSaveDirStatus" style="font-size:11px;color:#7d8bab;flex:1 1 auto;"></span>
+        <button id="editSaveDirPick" style="min-height:32px;font-size:11px;padding:0 10px;">保存先を選ぶ</button>
+      </div>
+
+      <div class="tuneBtns" style="margin-bottom:2px;">
+        <button id="bulkCopy">全キャラぶんJSONをコピー</button>
+        <button id="bulkDownload">全キャラぶんファイルに保存</button>
+      </div>
+      <p class="editCaption">こちらは「今まで触った全キャラぶん」（かたち＋調整すべて）をまとめて出す、陽太さんに渡す用のバックアップです。1キャラだけの書き出しは上の「完成にする」を使ってください。</p>
+      <textarea id="bulkJson" readonly placeholder="「全キャラぶんJSONをコピー」を押すと、触ったキャラのぶんだけここに出ます"></textarea>
+
+      <div id="editCols">
+        <!-- かたち -->
+        <div class="editSection">
+          <div class="editSectionHead">かたち</div>
+          <div class="tuneBtns" style="margin-bottom:6px;">
+            <button id="shapeModePos" class="on">配置を編集</button>
+            <button id="shapeModeGroup">色分けを編集</button>
+          </div>
+          <p id="shapeHint" style="font-size:12px;color:#9fb2d8;line-height:1.6;margin:0 0 8px;"></p>
+          <div class="tuneRow" id="shapeGroupClearRow" style="display:none;">
+            <button id="shapeGroupClear">選択をクリア</button>
+            <span style="font-size:11px;color:#7d8bab;">最初から選び直す</span>
+          </div>
+          <div id="shapeCountRow" style="font-size:13px;color:#e9eefb;margin-bottom:6px;"></div>
+          <div class="tuneRow" id="shapeCarveRow">
+            <label>10個の起点</label>
+            <select id="shapeCarveMode" style="flex:1 1 auto;min-height:40px;background:#0f1830;color:#e9eefb;border:1px solid #2a3550;border-radius:8px;">
+              <option value="top">上から</option>
+              <option value="bottom">下から</option>
+              <option value="col">列から</option>
+            </select>
+          </div>
+          <canvas id="shapeCanvas" style="width:100%;touch-action:none;border-radius:8px;background:#0a1120;"></canvas>
+          <div class="tuneBtns">
+            <button id="shapeShrink" title="グリッドを狭める">グリッドを狭める</button>
+            <button id="shapeGrow" title="グリッドを広げる">グリッドを広げる</button>
+          </div>
+          <p class="editCaption">配置をゼロから作り直したいときのプリセット（今のキャラに当てはまらない形は押せません。色分けは自動に戻ります）。</p>
+          <div class="tuneBtns">
+            <button id="presetTriA" title="階段形状（左が低い→右が高い）">三角数A（階段:左→右）</button>
+            <button id="presetTriB" title="階段形状（左が高い→右が低い）">三角数B（階段:右→左）</button>
+            <button id="presetSquare" title="N×Nの正方形に並べる">平方数（N×N）</button>
+            <button id="preset10nm" title="10個ずつ、左上から順に埋める">10n+m（左から埋める）</button>
+          </div>
+          <p class="editCaption">このキャラのかたちの編集を元に戻します（他のキャラには影響しません）。書き出しは上部の「完成にする」／「全キャラぶんJSON」を使ってください。</p>
+          <div class="tuneBtns">
+            <button id="shapeResetOne">このキャラをリセット</button>
+          </div>
+        </div>
+
+        <!-- 調整（前半：顔全体・目・眉） -->
+        <div class="editSection">
+          <div class="editSectionHead">調整（顔・目・眉）</div>
+          <div id="tuneRowsA"></div>
+        </div>
+
+        <!-- 調整（後半：口・手足） -->
+        <div class="editSection">
+          <div class="editSectionHead">調整（口・手足）</div>
+          <div id="tuneRowsB"></div>
+          <p class="editCaption">このキャラの調整（顔・目・眉・口・手足すべて）を元に戻します（他のキャラには影響しません）。書き出しは上部の「完成にする」／「全キャラぶんJSON」を使ってください。</p>
+          <div class="tuneBtns">
+            <button id="tuneResetOne">このキャラをリセット</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 描画エンジン本体（キャラの見た目の定義・描画関数）は共通ファイル。
+     numberblocks（ゲーム側）も同じものを読み込むので、ここを直せば両方に反映される。 -->
+<!-- 陽太さんの確定ぶん（自動生成）。エンジンより先に読ませる -->
+<script src="overrides.js"></script>
+<script src="engine.js"></script>
+<script>
+/* ここから下は、このツール（ずかん／編集パネル）専用の UI ロジックだけ。 */
+
+
+/* ===================== UI（ずかん／詳細） ===================== */
+
+const gridEl      = document.getElementById('grid');
+const zukanScreen = document.getElementById('zukanScreen');
+const detailScreen= document.getElementById('detailScreen');
+const detailCanvas= document.getElementById('detailCanvas');
+const detailTitle = document.getElementById('detailTitle');
+const badgesEl    = document.getElementById('badges');
+const divListEl   = document.getElementById('divList');
+
+let currentScreen = 'zukan';
+let currentN = 1;
+const thumbs = [];   // {n, canvas}
+
+function dpr(){ return Math.min(window.devicePixelRatio||1, 2); }
+
+function prepCanvas(cv, cssW, cssH){
+  const d = dpr();
+  cv.width  = Math.max(1, Math.round(cssW*d));
+  cv.height = Math.max(1, Math.round(cssH*d));
+  const c = cv.getContext('2d');
+  c.setTransform(d,0,0,d,0,0);
+  return c;
+}
+
+/* ── ずかんグリッド生成 ── */
+function buildZukan(){
+  const frag = document.createDocumentFragment();
+  for(let n=1;n<=100;n++){
+    const cell = document.createElement('div');
+    cell.className = 'thumb';
+    cell.dataset.n = n;
+    const cv = document.createElement('canvas');
+    cell.appendChild(cv);
+    const lab = document.createElement('div');
+    lab.className='lab'; lab.textContent = n;
+    cell.appendChild(lab);
+    const mark = document.createElement('div');
+    mark.className = 'confirmMark'; mark.textContent = '✓';
+    cell.appendChild(mark);
+    const memoMark = document.createElement('div');
+    memoMark.className = 'memoMark'; memoMark.textContent = '📝';
+    cell.appendChild(memoMark);
+    frag.appendChild(cell);
+    thumbs.push({ n:n, canvas:cv, mark:mark, memoMark:memoMark });
+  }
+  gridEl.appendChild(frag);
+}
+
+function renderThumbs(){
+  // 全マス共通のサイズ（1マス目の実寸）を使い、行ごとに縮尺が変わらないようにする
+  const r0 = thumbs[0].canvas.getBoundingClientRect();
+  const cw = Math.round(r0.width)  || 80;
+  const ch = Math.round(r0.height) || 108;
+  // 1マスの大きさは 100（10×10）が収まる値を1回だけ決め、全マスで共有する
+  const thumbCube = cubeSizeFor(cw-6, ch-6);
+  for(const th of thumbs){
+    const c = prepCanvas(th.canvas, cw, ch);
+    c.clearRect(0,0,cw,ch);
+    // ずかんも1マスの大きさは共通定数。1 は小さな点、100 はマスいっぱいになる
+    drawNumberblockFit(c, th.n, 3, 3, cw-6, ch-6, { numberling:false, cube:thumbCube });
+    th.mark.style.display = CONFIRMED_USER[th.n] ? 'block' : 'none';
+    th.memoMark.style.display = MEMO_USER[th.n] ? 'block' : 'none';
+  }
+}
+
+/* ── 詳細描画 ── */
+function renderDetail(t){
+  const stage = document.getElementById('detailStage');
+  const r = stage.getBoundingClientRect();
+  const cw = r.width || 320, ch = r.height || 380;
+  const c = prepCanvas(detailCanvas, cw, ch);
+  // 背景
+  const g = c.createLinearGradient(0,0,0,ch);
+  g.addColorStop(0,'#16233d'); g.addColorStop(1,'#0d1422');
+  c.fillStyle=g; c.fillRect(0,0,cw,ch);
+  // 床（下の隅のナビボタンの帯）
+  const btnBand = 84;
+  c.fillStyle='rgba(255,255,255,0.05)';
+  c.fillRect(0, ch-btnBand, cw, btnBand);
+  drawNumberblockFit(c, currentN, 12, 8, cw-24, ch-btnBand-8, { t:t||0, animate:true });
+}
+
+function renderBadges(n){
+  const p = numProps(n);
+  const items = [];
+  items.push({ txt:'約数 '+p.divisorCount+'個', cls:'on' });
+  if(p.isSquare)       items.push({ txt:'平方数 ('+Math.round(Math.sqrt(n))+'×'+Math.round(Math.sqrt(n))+')', cls:'sq' });
+  if(p.isPrime)        items.push({ txt:'素数', cls:'pr' });
+  if(p.isTriangular)   items.push({ txt:'三角数 ('+p.triangularStep+'段)', cls:'tri' });
+  if(p.isSuperRect)    items.push({ txt:'スーパー長方形', cls:'sr' });
+  if(p.isMultipleOf11) items.push({ txt:'11の倍数', cls:'e11' });
+  badgesEl.innerHTML = '';
+  for(const it of items){
+    const b = document.createElement('span');
+    b.className = 'badge '+it.cls; b.textContent = it.txt;
+    badgesEl.appendChild(b);
+  }
+  // 約数一覧＋かけ算の組
+  const pairs = [];
+  for(const d of p.divisors){ if(d*d<=n) pairs.push(d+'×'+(n/d)); }
+  divListEl.innerHTML =
+    '<div>約数：<b>'+p.divisors.join(', ')+'</b></div>' +
+    '<div>かけ算：<b>'+pairs.join('　')+'</b></div>';
+}
+
+function openDetail(n){
+  currentN = Math.max(1, Math.min(100, n));
+  currentScreen = 'detail';
+  detailScreen.classList.add('on');
+  detailTitle.textContent = currentN;
+  // _specCache が何らかの理由で古いまま残っていても、キャラを選び直した
+  // 瞬間には必ず今の上書きデータ（かたち／色分け／調整）で再計算させる。
+  // （色分け編集→確定→リロード後に、一度でも先にキャッシュされていた
+  //   キャラだけ古い自動配置のまま表示され続ける不具合の対策）
+  invalidateSpec(currentN);
+  renderBadges(currentN);
+  renderDetail(0);
+  document.getElementById('prevBtn').disabled = (currentN<=1);
+  document.getElementById('nextBtn').disabled = (currentN>=100);
+  if(editOpen){                     // 編集パネルを開いたまま隣のキャラへ移動できる
+    buildTuneRows();
+    buildShapeEditor();
+    updateConfirmBadge();
+    updateMemoField();
+    document.getElementById('editTitle').textContent = currentN + ' を編集';
+  }
+  startLoop();
+}
+function closeDetail(){
+  currentScreen = 'zukan';
+  detailScreen.classList.remove('on');
+  closeEdit();
+  stopLoop();
+  renderThumbs();                 // 調整結果をサムネイルにも反映
+}
+
+/* ── 詳細のゆるいアニメーション（rAF は詳細画面だけ） ── */
+let rafId = 0, loopOn = false;
+function loop(ts){
+  if(!loopOn) return;
+  renderDetail(ts);
+  rafId = requestAnimationFrame(loop);
+}
+function startLoop(){ if(!loopOn){ loopOn=true; rafId=requestAnimationFrame(loop); } }
+function stopLoop(){ loopOn=false; if(rafId) cancelAnimationFrame(rafId); rafId=0; }
+
+/* ── イベント ── */
+gridEl.addEventListener('click', function(e){
+  const cell = e.target.closest ? e.target.closest('.thumb') : null;
+  if(!cell) return;
+  openDetail(parseInt(cell.dataset.n,10));
+});
+document.getElementById('closeBtn').addEventListener('click', closeDetail);
+document.getElementById('prevBtn').addEventListener('click', function(){ if(currentN>1) openDetail(currentN-1); });
+document.getElementById('nextBtn').addEventListener('click', function(){ if(currentN<100) openDetail(currentN+1); });
+document.addEventListener('keydown', function(e){
+  if(currentScreen!=='detail') return;
+  if(e.key==='ArrowLeft'  && currentN>1)   openDetail(currentN-1);
+  if(e.key==='ArrowRight' && currentN<100) openDetail(currentN+1);
+  if(e.key==='Escape') closeDetail();
+});
+
+/* ═══════════ 調整モード ═══════════
+   Wiki に目・口の数値がないので、実物を見ながらここで詰めて、
+   出てきた JSON をコードの FACE_GEOM に貼り戻す運用にする。       */
+const TUNE_KEY = 'nbg.faceGeom.v1';
+// 項目が増えてきたのでカテゴリ分けして表示する。表示順もこの並びに従う
+const TUNE_GROUPS = ['顔全体', '目', '眉', '口', '手足'];
+// 「調整」列を前半／後半の2カラムに分けるためのグルーピング
+const TUNE_GROUPS_A = ['顔全体', '目', '眉'];   // 前半
+const TUNE_GROUPS_B = ['口', '手足'];           // 後半
+const TUNE_SLIDERS = [
+  { key:'faceScale',    label:'顔全体の倍率', min:0.5,  max:2.5,  step:0.02, group:'顔全体' },
+  { key:'faceRow',      label:'顔の行(上から)', min:0,  max:15,   step:1,    fallbackKey:'faceRow', group:'顔全体' },
+  { key:'faceOffsetY',  label:'顔全体 上下',  min:-1.0, max:8.0,  step:0.05, group:'顔全体' },
+  { key:'eyeScale',     label:'目の大きさ',   min:0.4,  max:2.0,  step:0.02, group:'目' },
+  { key:'eyeGap',       label:'目の間隔(倍率)', min:0.3, max:2.0, step:0.02, fallbackKey:'eyeGap', group:'目' },
+  { key:'pupilShift',   label:'瞳の中心寄せ', min:-0.4, max:0.4,  step:0.01, fallbackKey:'pupilShift', group:'目' },
+  { key:'mouthScale',   label:'口の大きさ',   min:0.4,  max:2.2,  step:0.02, group:'口' },
+  { key:'mouthOffsetX', label:'口 左右',      min:-0.8, max:0.8,  step:0.02, group:'口' },
+  { key:'mouthOffsetY', label:'口 上下',      min:-0.8, max:1.2,  step:0.02, group:'口' },
+  { key:'mouthTilt',    label:'口の傾き(°)',  min:-30,  max:30,   step:1,    fallbackKey:'mouthTilt', group:'口' },
+  { key:'armAnchor',    label:'腕の付け根(位置)', min:0,  max:1,   step:0.02, fallbackKey:'armAnchor', group:'手足' },
+  { key:'armRow',       label:'腕の付け根(行)', min:0,   max:15,  step:1,    fallbackKey:'armRow', group:'手足' },
+  { key:'eyebrowGap',   label:'眉と目の距離(倍率)', min:0.3, max:2.5, step:0.05, fallbackKey:'eyebrowGap', group:'眉' }
+];
+// 「上書きしない」がある項目（faceSpec 側に既定値があるもの）。null なら未上書き扱い
+const TUNE_NULLABLE_SLIDERS = ['mouthTilt','armAnchor','armRow','pupilShift','faceRow','eyeGap','eyebrowGap'];
+const TUNE_SELECTS = [
+  { key:'eyeShape',     label:'目の形',   group:'目', options:[['','（既定のまま）'],['round','丸'],['square','四角'],['rect','長方形'],['rectTall','縦長長方形'],['rectWide','横広長方形'],['star','星型']] },
+  { key:'eyebrowShape', label:'眉の形',   group:'眉', options:[['','（既定のまま）'],['none','なし'],['rect','長方形'],['line','直線'],['zigzag','ギザギザ']] },
+  { key:'eyebrowTilt',  label:'眉の角度', group:'眉', options:[['','（既定のまま）'],['flat','水平'],['drooping','タレ眉'],['rising','吊り眉']] },
+  { key:'teethStyle',   label:'歯の描き方', group:'口', options:[['','（既定のまま）'],['bands','帯（1〜6風）'],['split','歯を並べる']] }
+];
+const TUNE_COLORS = [
+  { key:'eyeRimRGB',   label:'目のふち', group:'目' },
+  { key:'lashRGB',     label:'まつげ',   group:'目' },
+  { key:'eyebrowRGB',  label:'眉の色',   group:'眉' },
+  { key:'lipRGB',      label:'くちびる', group:'口' },
+  { key:'limbRGB',     label:'手足（単色）', group:'手足' }
+];
+function rgbToHex(c){ return '#' + c.map(v=>Math.max(0,Math.min(255,Math.round(v))).toString(16).padStart(2,'0')).join(''); }
+function hexToRgb(h){ const n=parseInt(h.slice(1),16); return [(n>>16)&255,(n>>8)&255,n&255]; }
+
+// 読み込みは共通エンジンの nbLoadUserEdits() が担当する（ゲーム側と共有）
+function loadTune(){ nbLoadUserEdits(); }
+function saveTune(){
+  try{ localStorage.setItem(TUNE_KEY, JSON.stringify(FACE_GEOM_USER)); }catch(e){}
+}
+
+const editPanel = document.getElementById('editPanel');
+const editBtn   = document.getElementById('editBtn');
+const tuneRowsA = document.getElementById('tuneRowsA');   // 前半：顔全体・目・眉
+const tuneRowsB = document.getElementById('tuneRowsB');   // 後半：口・手足
+const bulkJson  = document.getElementById('bulkJson');
+let editOpen = false;
+
+function tuneSet(key, val){
+  if(!FACE_GEOM_USER[currentN]) FACE_GEOM_USER[currentN] = {};
+  if(val===null) delete FACE_GEOM_USER[currentN][key];
+  else FACE_GEOM_USER[currentN][key] = val;
+  saveTune();
+  renderDetail(0);
+}
+
+function buildTuneRows(){
+  tuneRowsA.innerHTML = '';
+  tuneRowsB.innerHTML = '';
+  const g = getFaceGeom(currentN);
+  const spec = blockSpec(currentN);   // faceSpec 側の既定値（null上書きのフォールバック用）
+
+  function fallbackFor(key){
+    if(key==='pupilShift') return spec.n===7 ? 0.16 : 0;
+    if(key==='faceRow')    return 0;                       // faceSpec に存在しない新項目
+    if(key==='armRow')     return Math.round(spec.rows*0.34);
+    if(key==='eyeGap')     return 1;
+    if(key==='eyebrowGap') return 1;
+    return spec.face[key];
+  }
+
+  // ── 数値スライダー（faceScale 等の常時値／mouthTilt 等の null-上書き値） ──
+  function addSliderRow(s, container){
+    const nullable = TUNE_NULLABLE_SLIDERS.indexOf(s.key) >= 0;
+    const fallback = nullable ? fallbackFor(s.key) : undefined;
+    const cur = nullable ? pick(g[s.key], fallback) : g[s.key];
+
+    const row = document.createElement('div'); row.className = 'tuneRow';
+    const lab = document.createElement('label'); lab.textContent = s.label;
+    const inp = document.createElement('input');
+    inp.type='range'; inp.min=s.min; inp.max=s.max; inp.step=s.step; inp.value=cur;
+    const decimals = s.step>=1 ? 0 : 2;
+    const val = document.createElement('span'); val.className='val';
+    val.textContent = Number(cur).toFixed(decimals);
+    inp.addEventListener('input', function(){
+      const v = parseFloat(inp.value);
+      val.textContent = v.toFixed(decimals);
+      tuneSet(s.key, v);
+    });
+    row.appendChild(lab); row.appendChild(inp); row.appendChild(val);
+    container.appendChild(row);
+  }
+
+  // ── プルダウン（目の形／眉の形・角度／歯の描き方） ──
+  function addSelectRow(s, container){
+    const row = document.createElement('div'); row.className = 'tuneRow';
+    const lab = document.createElement('label'); lab.textContent = s.label;
+    const sel = document.createElement('select');
+    sel.style.cssText = 'flex:1 1 auto;min-height:40px;background:#0f1830;color:#e9eefb;border:1px solid #2a3550;border-radius:8px;';
+    const cur = g[s.key];
+    for(const [ov,lb] of s.options){
+      const opt = document.createElement('option'); opt.value=ov; opt.textContent=lb;
+      if((cur||'')===ov) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    sel.addEventListener('change', function(){ tuneSet(s.key, sel.value || null); });
+    row.appendChild(lab); row.appendChild(sel);
+    container.appendChild(row);
+  }
+
+  // ── 色（チェックで上書きON/OFF＋カラーピッカー） ──
+  function addColorRow(s, container){
+    const row = document.createElement('div'); row.className = 'tuneRow';
+    const lab = document.createElement('label'); lab.textContent = s.label;
+    const chk = document.createElement('input'); chk.type='checkbox';
+    chk.checked = !!g[s.key];
+    const col = document.createElement('input'); col.type='color';
+    col.style.cssText = 'flex:1 1 auto;height:40px;';
+    const fallbackRGB = g[s.key] || [180,180,180];
+    col.value = rgbToHex(fallbackRGB);
+    col.disabled = !chk.checked;
+    chk.addEventListener('change', function(){
+      col.disabled = !chk.checked;
+      tuneSet(s.key, chk.checked ? hexToRgb(col.value) : null);
+    });
+    col.addEventListener('input', function(){
+      if(chk.checked) tuneSet(s.key, hexToRgb(col.value));
+    });
+    row.appendChild(lab); row.appendChild(chk); row.appendChild(col);
+    container.appendChild(row);
+  }
+
+  // ── 手足グラデーション（2色。両方セットすると limbGrad として上書き） ──
+  function addLimbGradRow(container){
+    const row = document.createElement('div'); row.className = 'tuneRow';
+    const lab = document.createElement('label'); lab.textContent = '手足グラデ';
+    const chk = document.createElement('input'); chk.type='checkbox';
+    const cur = g.limbGrad;
+    chk.checked = !!cur;
+    const colA = document.createElement('input'); colA.type='color';
+    const colB = document.createElement('input'); colB.type='color';
+    colA.style.cssText = colB.style.cssText = 'flex:1 1 auto;height:40px;';
+    colA.value = rgbToHex(cur ? cur[0] : [220,60,60]);
+    colB.value = rgbToHex(cur ? cur[1] : [120,40,160]);
+    colA.disabled = colB.disabled = !chk.checked;
+    function applyGrad(){ tuneSet('limbGrad', chk.checked ? [hexToRgb(colA.value), hexToRgb(colB.value)] : null); }
+    chk.addEventListener('change', function(){ colA.disabled=colB.disabled=!chk.checked; applyGrad(); });
+    colA.addEventListener('input', applyGrad);
+    colB.addEventListener('input', applyGrad);
+    row.appendChild(lab); row.appendChild(chk); row.appendChild(colA); row.appendChild(colB);
+    container.appendChild(row);
+  }
+
+  // ── まつげの本数 ──
+  function addLashesRow(container){
+    const row = document.createElement('div'); row.className = 'tuneRow';
+    const lab = document.createElement('label'); lab.textContent = 'まつげ本数';
+    const inp = document.createElement('input');
+    inp.type='number'; inp.min=0; inp.max=5; inp.step=1;
+    inp.style.cssText = 'flex:1 1 auto;height:40px;background:#0f1830;color:#e9eefb;border:1px solid #2a3550;border-radius:8px;text-align:center;';
+    inp.value = pick(g.lashes, spec.face.lashes||0);
+    inp.addEventListener('input', function(){
+      const v = parseInt(inp.value,10);
+      tuneSet('lashes', isNaN(v) ? null : v);
+    });
+    row.appendChild(lab); row.appendChild(inp);
+    container.appendChild(row);
+  }
+
+  // グループ専用の追加項目（TUNE_SLIDERS/SELECTS/COLORS の一覧に収まらないもの）
+  const CUSTOM_BY_GROUP = { '目':[addLashesRow], '手足':[addLimbGradRow] };
+
+  // 前半（顔全体・目・眉）／後半（口・手足）の2列に分けて描画する
+  for(const grp of TUNE_GROUPS){
+    const container = TUNE_GROUPS_A.indexOf(grp)>=0 ? tuneRowsA : tuneRowsB;
+    const head = document.createElement('div'); head.className = 'tuneCatHead'; head.textContent = grp;
+    container.appendChild(head);
+    TUNE_SLIDERS.filter(s => s.group===grp).forEach(s => addSliderRow(s, container));
+    TUNE_SELECTS.filter(s => s.group===grp).forEach(s => addSelectRow(s, container));
+    TUNE_COLORS.filter(s => s.group===grp).forEach(s => addColorRow(s, container));
+    (CUSTOM_BY_GROUP[grp] || []).forEach(fn => fn(container));
+  }
+}
+
+/** かたち・調整をまとめた編集パネルを開閉する（以前は別パネルで排他表示だったが、
+ * 両方を見ながら調整したいという要望から1画面にまとめた）。 */
+function openEdit(){
+  editOpen = true;
+  editPanel.classList.add('on');
+  editBtn.classList.add('on');
+  buildTuneRows();
+  buildShapeEditor();
+  updateConfirmBadge();
+  updateMemoField();
+  document.getElementById('editTitle').textContent = currentN + ' を編集';
+}
+function closeEdit(){
+  editOpen = false;
+  editPanel.classList.remove('on');
+  editBtn.classList.remove('on');
+}
+editBtn.addEventListener('click', function(){ editOpen ? closeEdit() : openEdit(); });
+document.getElementById('editClose').addEventListener('click', closeEdit);
+
+document.getElementById('tuneResetOne').addEventListener('click', function(){
+  delete FACE_GEOM_USER[currentN];
+  saveTune(); buildTuneRows(); renderDetail(0); renderThumbs();
+});
+
+/* ═══════════ かたち編集モード ═══════════
+   ブロックをドラッグして並べ替える。ドロップ先が空きマスなら移動、
+   ほかのブロックがあれば入れ替え。10個かたまりの色分け（つながりの判定）は
+   既存の carveConnectedTens に丸投げするので、ここでは「どのマス(gx,gy)に
+   何個あるか」だけを気にすればよい。                                     */
+const SHAPE_KEY = 'nbg.shapeOverride.v1';
+function loadShape(){ nbLoadUserEdits(); }
+function saveShape(){ try{ localStorage.setItem(SHAPE_KEY, JSON.stringify(SHAPE_OVERRIDE_USER)); }catch(e){} }
+
+const CARVE_KEY = 'nbg.carveMode.v1';
+function loadCarveMode(){ nbLoadUserEdits(); }
+function saveCarveMode(){ try{ localStorage.setItem(CARVE_KEY, JSON.stringify(CARVE_MODE_USER)); }catch(e){} }
+
+const GROUP_KEY = 'nbg.groupOverride.v1';
+function loadGroupOverride(){ nbLoadUserEdits(); }
+function saveGroupOverride(){ try{ localStorage.setItem(GROUP_KEY, JSON.stringify(GROUP_OVERRIDE_USER)); }catch(e){} }
+
+/* ═══════════ 「確定」マーク ═══════════
+   キャラごとに「もう見た目を決めた」を記録する。100キャラを順に触っていく上での
+   進捗管理用。押すと同時に、そのキャラの調整・かたちをまとめた JSON も1つだけ
+   ダウンロードする（毎回かたち／調整の両方を別々にエクスポートしなくて済むように）。 */
+const CONFIRM_KEY = 'nbg.confirmed.v1';
+let CONFIRMED_USER = {};
+function loadConfirmed(){
+  try{
+    const raw = localStorage.getItem(CONFIRM_KEY);
+    CONFIRMED_USER = raw ? JSON.parse(raw) : {};
+  }catch(e){ CONFIRMED_USER = {}; }
+}
+function saveConfirmed(){ try{ localStorage.setItem(CONFIRM_KEY, JSON.stringify(CONFIRMED_USER)); }catch(e){} }
+
+/* ═══════════ キャラごとのメモ ═══════════
+   既存の「調整」「かたち」項目では対応できない要望を、キャラ単位で自由に
+   書き留めておく欄。自動保存（localStorage）され、「全キャラぶんJSON」に
+   一緒に出力される＝最後にまとめて陽太さんから渡してもらう運用にする。 */
+const MEMO_KEY = 'nbg.memo.v1';
+let MEMO_USER = {};
+function loadMemo(){
+  try{
+    const raw = localStorage.getItem(MEMO_KEY);
+    MEMO_USER = raw ? JSON.parse(raw) : {};
+  }catch(e){ MEMO_USER = {}; }
+}
+function saveMemo(){ try{ localStorage.setItem(MEMO_KEY, JSON.stringify(MEMO_USER)); }catch(e){} }
+function updateMemoField(){
+  const el = document.getElementById('editMemo');
+  if(el) el.value = MEMO_USER[currentN] || '';
+}
+let memoSaveTimer = 0;
+document.getElementById('editMemo').addEventListener('input', function(){
+  const v = this.value;
+  clearTimeout(memoSaveTimer);
+  memoSaveTimer = setTimeout(function(){
+    if(v.trim()) MEMO_USER[currentN] = v; else delete MEMO_USER[currentN];
+    saveMemo();
+    renderThumbs();   // ずかんのメモ有無バッジを更新
+  }, 400);
+});
+
+/** 指定キャラの調整・かたち・10個の起点・色分け・メモをまとめて1つのオブジェクトにする */
+function characterExportFor(n){
+  const out = {};
+  const tune = FACE_GEOM_USER[n];
+  if(tune && Object.keys(tune).length){
+    const keep = {};
+    for(const k in tune){
+      const v = tune[k];
+      keep[k] = (typeof v === 'number') ? Math.round(v*1000)/1000 : v;
+    }
+    out.tune = keep;
+  }
+  if(SHAPE_OVERRIDE_USER[n]) out.cells = SHAPE_OVERRIDE_USER[n].map(c => [c.gx, c.gy]);
+  if(CARVE_MODE_USER[n]) out.carveMode = CARVE_MODE_USER[n];
+  if(GROUP_OVERRIDE_USER[n] && GROUP_OVERRIDE_USER[n].ones) out.groupOnes = GROUP_OVERRIDE_USER[n].ones;
+  if(MEMO_USER[n]) out.memo = MEMO_USER[n];
+  return out;
+}
+function currentCharacterExport(){ return characterExportFor(currentN); }
+/** 「今まで触った全キャラぶん」（かたち＋調整）をまとめて1つのJSONにする。
+ * これまで「かたち」「調整」で別々だったコピー/保存ボタンを1本化したもの。 */
+function combinedBulkExport(){
+  const out = {};
+  const ns = new Set(
+    Object.keys(SHAPE_OVERRIDE_USER)
+      .concat(Object.keys(CARVE_MODE_USER))
+      .concat(Object.keys(GROUP_OVERRIDE_USER))
+      .concat(Object.keys(FACE_GEOM_USER))
+      .concat(Object.keys(MEMO_USER))
+  );
+  for(const n of ns){
+    const entry = characterExportFor(n);
+    if(Object.keys(entry).length) out[n] = entry;
+  }
+  return JSON.stringify(out, null, 2);
+}
+document.getElementById('bulkCopy').addEventListener('click', function(){
+  const txt = combinedBulkExport();
+  bulkJson.value = txt;
+  bulkJson.focus(); bulkJson.select();
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(txt).catch(function(){
+        try{ document.execCommand('copy'); }catch(e2){}
+      });
+    } else {
+      document.execCommand('copy');
+    }
+  }catch(e){ /* 表示済みなので手で選択してもらう */ }
+});
+document.getElementById('bulkDownload').addEventListener('click', function(){
+  const txt = combinedBulkExport();
+  bulkJson.value = txt;
+  const blob = new Blob([txt], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'character-overrides.json';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+});
+function updateConfirmBadge(){
+  const btn = document.getElementById('editConfirm');
+  if(!btn) return;
+  const on = !!CONFIRMED_USER[currentN];
+  btn.textContent = on ? '☑ 完成ずみ（もう一度押すとマークだけ取り消す）' : '☐ このキャラは完成にする';
+  btn.classList.toggle('on', on);
+}
+
+/* ── 保存先フォルダ（File System Access API） ──
+   対応ブラウザ（Chrome/Edge系）では、確定時のJSONをダウンロードフォルダではなく
+   指定したフォルダへ直接書き込める。フォルダ選択はブラウザの制約で番地を
+   こちらから指定できない（ユーザーが picker で手動で辿る必要がある）ため、
+   「保存先を選ぶ」で一度だけ numberblocks\data フォルダを選んでもらう運用にする。
+   選んだハンドルは IndexedDB に保存し、次回以降は選び直さなくてよいようにする
+   （読み書きの許可自体は、ブラウザの仕様上ページを開くたびに再確認され得る）。
+   未対応ブラウザ／未設定のときはこれまで通りダウンロードにフォールバックする。 */
+const FSAPI_SUPPORTED = (typeof window.showDirectoryPicker === 'function');
+const FSAPI_DB_NAME = 'nbg-fsapi', FSAPI_STORE = 'handles', FSAPI_KEY = 'saveDir';
+let editSaveDirHandle = null;
+
+function fsapiOpenDb(){
+  return new Promise(function(resolve, reject){
+    const req = indexedDB.open(FSAPI_DB_NAME, 1);
+    req.onupgradeneeded = function(){ req.result.createObjectStore(FSAPI_STORE); };
+    req.onsuccess = function(){ resolve(req.result); };
+    req.onerror = function(){ reject(req.error); };
+  });
+}
+function fsapiGetSavedHandle(){
+  return fsapiOpenDb().then(function(db){
+    return new Promise(function(resolve){
+      const tx = db.transaction(FSAPI_STORE, 'readonly');
+      const req = tx.objectStore(FSAPI_STORE).get(FSAPI_KEY);
+      req.onsuccess = function(){ resolve(req.result || null); };
+      req.onerror = function(){ resolve(null); };
+    });
+  }).catch(function(){ return null; });
+}
+function fsapiSaveHandle(handle){
+  return fsapiOpenDb().then(function(db){
+    return new Promise(function(resolve, reject){
+      const tx = db.transaction(FSAPI_STORE, 'readwrite');
+      tx.objectStore(FSAPI_STORE).put(handle, FSAPI_KEY);
+      tx.oncomplete = resolve;
+      tx.onerror = function(){ reject(tx.error); };
+    });
+  }).catch(function(){ /* 保存失敗しても致命的ではない（毎回選び直しになるだけ） */ });
+}
+function updateSaveDirStatus(){
+  const el = document.getElementById('editSaveDirStatus');
+  if(!el) return;
+  if(!FSAPI_SUPPORTED) el.textContent = 'このブラウザは直接保存に非対応です（ダウンロードになります）';
+  else if(editSaveDirHandle) el.textContent = '保存先：' + editSaveDirHandle.name + ' フォルダ';
+  else el.textContent = '保存先フォルダ：未設定（ダウンロードになります）';
+}
+function editPickSaveDir(){
+  if(!FSAPI_SUPPORTED) return;
+  window.showDirectoryPicker({ id:'nbg-save-dir', mode:'readwrite' }).then(function(handle){
+    editSaveDirHandle = handle;
+    fsapiSaveHandle(handle);
+    updateSaveDirStatus();
+  }).catch(function(){ /* キャンセル等。何もしない */ });
+}
+document.getElementById('editSaveDirPick').addEventListener('click', editPickSaveDir);
+if(!FSAPI_SUPPORTED) document.getElementById('editSaveDirPick').style.display = 'none';
+updateSaveDirStatus();
+fsapiGetSavedHandle().then(function(h){ editSaveDirHandle = h; updateSaveDirStatus(); });
+
+/** 確定JSONを保存先フォルダへ直接書き込む。失敗・未対応なら false
+ * （呼び出し側でダウンロードにフォールバックする）。 */
+function editWriteToSaveDir(filename, text){
+  if(!FSAPI_SUPPORTED || !editSaveDirHandle) return Promise.resolve(false);
+  return editSaveDirHandle.queryPermission({ mode:'readwrite' }).then(function(perm){
+    if(perm === 'granted') return true;
+    return editSaveDirHandle.requestPermission({ mode:'readwrite' }).then(function(p){ return p==='granted'; });
+  }).then(function(granted){
+    if(!granted) return false;
+    return editSaveDirHandle.getFileHandle(filename, { create:true }).then(function(fh){
+      return fh.createWritable().then(function(w){
+        return w.write(text).then(function(){ return w.close(); }).then(function(){ return true; });
+      });
+    });
+  }).catch(function(){ return false; });
+}
+
+document.getElementById('editConfirm').addEventListener('click', function(){
+  const turningOn = !CONFIRMED_USER[currentN];
+  if(turningOn) CONFIRMED_USER[currentN] = true; else delete CONFIRMED_USER[currentN];
+  saveConfirmed();
+  updateConfirmBadge();
+  renderThumbs();
+  if(!turningOn) return;   // 解除のときは書き出さない
+  const combined = {}; combined[currentN] = currentCharacterExport();
+  const txt = JSON.stringify(combined, null, 2);
+  const filename = 'character-' + currentN + '-confirmed.json';
+  editWriteToSaveDir(filename, txt).then(function(wroteDirect){
+    if(wroteDirect) return;
+    // フォールバック：ダウンロード
+    const blob = new Blob([txt], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+  });
+});
+
+const shapeCanvas = document.getElementById('shapeCanvas');
+let shapeCells = [];      // 編集中のセル配列 {gx,gy}（作業コピー）
+let shapeCols = 6, shapeRows = 6;
+let shapeExtraMargin = 0; // 「グリッドを広げる」で増える余白
+let shapeDrag = null;     // {index, offsetCssX, offsetCssY}
+let shapeDragLiveKey = null;  // ドラッグ中に最後にライブ反映した "gx,gy"（マスまたぎ検知用）
+let shapeGroupMode = false;   // false=配置編集（ドラッグ） / true=色分け編集（クリックで一の位指定）
+let shapeOnesOrder = [];      // 色分け編集中の作業コピー。[[gx,gy],...]（クリック順＝虹/灰の階調順）
+let shapeHover = null;        // マウスオーバー中のマス {gx,gy}（強調表示用）
+let shapeHoverKey = null;     // 上の "gx,gy" キャッシュ（変化検知用）
+
+function shapeOnesRepresentativeColor(onesDigit, idx){
+  if(onesDigit===7) return RAINBOW[(6-idx)%7];
+  if(onesDigit===9) return GRAY3[Math.floor(idx/3)%3];
+  return DIGIT_COLORS[onesDigit] || [150,150,150];
+}
+
+function shapeRebuildBounds(){
+  let minX=0,minY=0,maxX=shapeCols-1,maxY=shapeRows-1;
+  if(shapeCells.length){
+    minX=Infinity;minY=Infinity;maxX=-Infinity;maxY=-Infinity;
+    for(const c of shapeCells){ if(c.gx<minX)minX=c.gx; if(c.gx>maxX)maxX=c.gx; if(c.gy<minY)minY=c.gy; if(c.gy>maxY)maxY=c.gy; }
+  }
+  const margin = 1 + shapeExtraMargin;
+  shapeCols = Math.max(3, (maxX-minX+1) + margin*2);
+  shapeRows = Math.max(3, (maxY-minY+1) + margin*2);
+  // 原点を余白ぶんずらす（負の座標にならないようにする）
+  const dx = margin - minX, dy = margin - minY;
+  if(dx || dy) shapeCells = shapeCells.map(c => ({gx:c.gx+dx, gy:c.gy+dy}));
+}
+
+const SHAPE_GRID_SCALE = 0.6;   // グリッド表示は列の幅いっぱいではなく6割程度に収める
+function shapeCellSize(){
+  // shapeCanvas.clientWidth は直前の描画で自分自身が設定した幅（cell×cols）なので、
+  // それを基準にすると列数が増えるたびに縮小し続けて元のサイズに戻れなくなる。
+  // 必ず「かたち列（.editSection）という安定した幅を持つ祖先要素」から computed する
+  // （4カラム化により、この列の幅＝#editCols のグリッドトラック幅で決まる）。
+  const section = shapeCanvas.closest('.editSection') || shapeCanvas.parentElement;
+  const cs = section ? getComputedStyle(section) : null;
+  const padX = cs ? (parseFloat(cs.paddingLeft)||0) + (parseFloat(cs.paddingRight)||0) : 0;
+  const cssW = (section ? section.clientWidth - padX : 0) || 320;
+  return Math.max(16, Math.min(56, Math.floor(cssW * SHAPE_GRID_SCALE / Math.max(shapeCols, 6))));
+}
+
+function drawShapeEditor(){
+  const cell = shapeCellSize();
+  const cssW = cell*shapeCols, cssH = cell*shapeRows;
+  // 幅を 100%（CSS）任せにすると、パネルにスクロールバーが出たときなどに
+  // 実際の表示幅と「cell×列数」がズレて、正方形が潰れたりクリック判定が
+  // ずれたりする。ここで px 指定に固定し、以後は常にこの値を正とする。
+  shapeCanvas.style.width  = cssW+'px';
+  shapeCanvas.style.height = cssH+'px';
+  const c = prepCanvas(shapeCanvas, cssW, cssH);
+  c.clearRect(0,0,cssW,cssH);
+  // グリッド線
+  c.strokeStyle = 'rgba(255,255,255,0.10)'; c.lineWidth = 1;
+  for(let gx=0; gx<=shapeCols; gx++){ c.beginPath(); c.moveTo(gx*cell+0.5,0); c.lineTo(gx*cell+0.5,cssH); c.stroke(); }
+  for(let gy=0; gy<=shapeRows; gy++){ c.beginPath(); c.moveTo(0,gy*cell+0.5); c.lineTo(cssW,gy*cell+0.5); c.stroke(); }
+
+  const tens = Math.floor(currentN/10), onesDigit = currentN % 10;
+
+  if(shapeGroupMode){
+    // 色分け編集：clickした順に一の位として塗る。残りは十のプールとして白系で表示
+    const oneKeyOf = (gx,gy) => shapeOnesOrder.findIndex(p => p[0]===gx && p[1]===gy);
+    shapeCells.forEach(cl => {
+      const idx = oneKeyOf(cl.gx, cl.gy);
+      let col, label = null;
+      if(idx>=0){ col = shapeOnesRepresentativeColor(onesDigit, idx); label = String(idx+1); }
+      else col = [225,225,235];
+      c.fillStyle = 'rgb('+col.join(',')+')';
+      c.beginPath(); c.roundRect(cl.gx*cell+2, cl.gy*cell+2, cell-4, cell-4, cell*0.14); c.fill();
+      if(idx>=0){
+        c.strokeStyle = 'rgba(0,0,0,0.55)'; c.lineWidth = 2;
+        c.beginPath(); c.roundRect(cl.gx*cell+2, cl.gy*cell+2, cell-4, cell-4, cell*0.14); c.stroke();
+        c.fillStyle = '#fff'; c.font = 'bold '+Math.round(cell*0.34)+'px sans-serif';
+        c.textAlign='center'; c.textBaseline='middle';
+        c.fillText(label, cl.gx*cell+cell/2, cl.gy*cell+cell/2);
+      }
+    });
+    const ok = shapeOnesOrder.length === onesDigit;
+    const row = document.getElementById('shapeCountRow');
+    row.textContent = '一の位：' + shapeOnesOrder.length + ' / ' + onesDigit +
+      (ok ? '（クリックでマスを選ぶ／もう一度押すと解除）' : '　←この数に合わせてください');
+    row.style.color = ok ? '#9fe0b0' : '#ffb3b3';
+    drawShapeHover(c, cell);
+    return;
+  }
+
+  // 配置編集：プレビュー用の色分け（carveConnectedTens を通した結果の色を使う）
+  let colored = [];
+  try{
+    const carved = carveConnectedTens(shapeCells, tens, getCarveMode(currentN));
+    colored = carved.map((c,i) => ({ gx:c.gx, gy:c.gy, isTen:i < tens*10 }));
+  }catch(e){ colored = shapeCells.map(c => ({gx:c.gx,gy:c.gy,isTen:false})); }
+  const colorOf = (gx,gy) => {
+    const hit = colored.find(p=>p.gx===gx&&p.gy===gy);
+    if(!hit) return [150,150,150];
+    return hit.isTen ? [220,220,235] : (DIGIT_COLORS[currentN%10]||[150,150,150]);
+  };
+  shapeCells.forEach((cl,i) => {
+    if(shapeDrag && shapeDrag.index===i) return;   // ドラッグ中のものは最後に描く
+    const col = colorOf(cl.gx, cl.gy);
+    c.fillStyle = 'rgb('+col.join(',')+')';
+    c.beginPath(); c.roundRect(cl.gx*cell+2, cl.gy*cell+2, cell-4, cell-4, cell*0.14); c.fill();
+  });
+  if(shapeDrag){
+    const cl = shapeCells[shapeDrag.index];
+    const col = colorOf(cl.gx, cl.gy);
+    c.save(); c.globalAlpha = 0.92;
+    c.fillStyle = 'rgb('+col.join(',')+')';
+    c.beginPath(); c.roundRect(shapeDrag.curX-cell/2+2, shapeDrag.curY-cell/2+2, cell-4, cell-4, cell*0.14); c.fill();
+    c.restore();
+  }
+  const row = document.getElementById('shapeCountRow');
+  row.style.color = '';
+  row.textContent = shapeCells.length + ' 個のブロック（' + currentN + ' に必要な数）';
+  drawShapeHover(c, cell);
+}
+
+/** マウスオーバー中のマスを強調表示する（ドラッグ中は出さない） */
+function drawShapeHover(c, cell){
+  if(!shapeHover || shapeDrag) return;
+  c.save();
+  c.strokeStyle = '#ffd23a'; c.lineWidth = 3;
+  c.beginPath();
+  c.roundRect(shapeHover.gx*cell+1.5, shapeHover.gy*cell+1.5, cell-3, cell-3, cell*0.16);
+  c.stroke();
+  c.restore();
+}
+
+const SHAPE_HINT_POS =
+  'ブロックをドラッグして並べ替えられます。空いているマスに置くと移動、' +
+  'ほかのブロックの上に置くと入れ替わります。10個ずつのかたまりの色分けは自動でつきます。';
+const SHAPE_HINT_GROUP =
+  '一の位（バラの個別色）にしたいマスをクリックしてください。クリックした順が' +
+  '虹色／グレーの階調の順になります。もう一度クリックすると解除します。';
+
+function buildShapeEditor(){
+  const spec = blockSpec(currentN);
+  shapeCells = spec.cells.map(c => ({gx:c.gx, gy:c.gy}));
+  shapeExtraMargin = 0;
+  shapeRebuildBounds();
+  // 色分け編集の初期状態：既存の上書きがあればそれ、なければ「今そのキャラが
+  // 実際に使っている一の位」をそのまま初期値にする（ゼロから選び直さなくてよい）。
+  // gov.ones は「外接矩形基準」の正規化座標なので、今の編集グリッド座標
+  // （余白オフセット込み）へ変換してから使う。
+  const gov = GROUP_OVERRIDE_USER[currentN];
+  if(gov && gov.ones){
+    const normNow = normalizeCells(shapeCells);
+    const lookup = new Map();   // "gx,gy"(正規化) -> {gx,gy}(今の編集グリッド座標)
+    shapeCells.forEach((c,i) => lookup.set(normNow[i].gx+','+normNow[i].gy, c));
+    shapeOnesOrder = gov.ones.map(p => {
+      const hit = lookup.get(p[0]+','+p[1]);
+      return hit ? [hit.gx, hit.gy] : p;
+    });
+  } else {
+    // spec.cells と shapeCells は同じ並び順（index 対応）。shapeRebuildBounds で
+    // 座標がシフトされている shapeCells 側の値を使う（spec.cells は旧座標のまま）。
+    shapeOnesOrder = spec.cells
+      .map((c,i) => ({ isOne: !c.isTen && !c.isHundred, pos: shapeCells[i] }))
+      .filter(o => o.isOne)
+      .map(o => [o.pos.gx, o.pos.gy]);
+  }
+  document.getElementById('shapeCarveMode').value = getCarveMode(currentN);
+  document.getElementById('shapeHint').textContent = shapeGroupMode ? SHAPE_HINT_GROUP : SHAPE_HINT_POS;
+  document.getElementById('shapeGroupClearRow').style.display = shapeGroupMode ? 'flex' : 'none';
+  shapeHover = null; shapeHoverKey = null;
+  // プリセットは今のキャラに当てはまる形だけ押せるようにする（10n+mは常に成立する）
+  const isTri = triStepOf(currentN) > 0;
+  const sqRoot = Math.round(Math.sqrt(currentN));
+  const isSquare = sqRoot*sqRoot === currentN;
+  document.getElementById('presetTriA').disabled = !isTri;
+  document.getElementById('presetTriB').disabled = !isTri;
+  document.getElementById('presetSquare').disabled = !isSquare;
+  drawShapeEditor();
+}
+
+/** かたちプリセット：三角数の階段（左が低い→右が高い） */
+function presetCellsTriangularA(n){
+  const k = triStepOf(n);
+  if(!k) return null;
+  const cells = [];
+  for(let c=0;c<k;c++){
+    const h = c+1;
+    for(let r=0;r<h;r++) cells.push({ gx:c, gy:(k-1)-r });
+  }
+  return cells;
+}
+/** かたちプリセット：三角数の階段（左が高い→右が低い＝Aの左右反転） */
+function presetCellsTriangularB(n){
+  const k = triStepOf(n);
+  const base = presetCellsTriangularA(n);
+  if(!base) return null;
+  return base.map(c => ({ gx:(k-1)-c.gx, gy:c.gy }));
+}
+/** かたちプリセット：平方数を N×N の正方形に並べる */
+function presetCellsSquare(n){
+  const s = Math.round(Math.sqrt(n));
+  if(s*s !== n) return null;
+  const cells = [];
+  for(let gy=0; gy<s; gy++) for(let gx=0; gx<s; gx++) cells.push({ gx, gy });
+  return cells;
+}
+/** かたちプリセット：10個ずつの行を上から、左から順に埋める（余りは最後の行） */
+function presetCells10nm(n){
+  const cells = [];
+  for(let i=0;i<n;i++) cells.push({ gx:i%10, gy:Math.floor(i/10) });
+  return cells;
+}
+/** プリセットで生成したセル配置を、今のキャラの「かたち」として確定する。
+ * 配置が根本的に変わるので、古い色分け指定（位置に紐づく）は破棄して自動色分けに戻す。 */
+function shapeApplyPreset(cells){
+  if(!cells) return;
+  shapeCells = normalizeCells(cells);
+  shapeExtraMargin = 0;
+  shapeRebuildBounds();
+  SHAPE_OVERRIDE_USER[currentN] = shapeCells.slice();
+  delete GROUP_OVERRIDE_USER[currentN];
+  saveShape();
+  saveGroupOverride();
+  invalidateSpec(currentN);
+  buildShapeEditor();
+  renderDetail(0);
+  renderThumbs();
+}
+document.getElementById('presetTriA').addEventListener('click', function(){ shapeApplyPreset(presetCellsTriangularA(currentN)); });
+document.getElementById('presetTriB').addEventListener('click', function(){ shapeApplyPreset(presetCellsTriangularB(currentN)); });
+document.getElementById('presetSquare').addEventListener('click', function(){ shapeApplyPreset(presetCellsSquare(currentN)); });
+document.getElementById('preset10nm').addEventListener('click', function(){ shapeApplyPreset(presetCells10nm(currentN)); });
+
+function shapeSaveGroupOverride(){
+  // 編集グリッドは余白ぶん座標がずれているので、「かたち全体（shapeCells）の
+  // 外接矩形」基準に正規化してから保存する（layoutCells 側もこの基準で照合する）。
+  GROUP_OVERRIDE_USER[currentN] = { ones: shapeOnesOrderNormalized() };
+  saveGroupOverride();
+  invalidateSpec(currentN);
+  drawShapeEditor();
+  renderDetail(0);
+  renderThumbs();
+}
+/** shapeOnesOrder（クリック順・編集グリッド座標）を、shapeCells全体の外接矩形基準に
+ * 正規化した配列に変換する（順序は維持する）。 */
+function shapeOnesOrderNormalized(){
+  const normFull = normalizeCells(shapeCells);
+  const map = new Map();               // "gx,gy"(編集座標) -> {gx,gy}(正規化後)
+  shapeCells.forEach((c,i) => map.set(c.gx+','+c.gy, normFull[i]));
+  return shapeOnesOrder.map(p => {
+    const n = map.get(p[0]+','+p[1]);
+    return n ? [n.gx, n.gy] : p;
+  });
+}
+
+document.getElementById('shapeModePos').addEventListener('click', function(){
+  shapeGroupMode = false;
+  document.getElementById('shapeModePos').classList.add('on');
+  document.getElementById('shapeModeGroup').classList.remove('on');
+  document.getElementById('shapeHint').textContent = SHAPE_HINT_POS;
+  document.getElementById('shapeGroupClearRow').style.display = 'none';
+  drawShapeEditor();
+});
+document.getElementById('shapeModeGroup').addEventListener('click', function(){
+  shapeGroupMode = true;
+  document.getElementById('shapeModeGroup').classList.add('on');
+  document.getElementById('shapeModePos').classList.remove('on');
+  document.getElementById('shapeHint').textContent = SHAPE_HINT_GROUP;
+  document.getElementById('shapeGroupClearRow').style.display = 'flex';
+  drawShapeEditor();
+});
+document.getElementById('shapeGroupClear').addEventListener('click', function(){
+  // パネルを開いた時点で既に既定の一の位が選択済みになっているため、
+  // 新しく選び直したいときにいちいち1個ずつ解除しなくて済むようにする
+  shapeOnesOrder = [];
+  shapeSaveGroupOverride();
+});
+document.getElementById('shapeCarveMode').addEventListener('change', function(ev){
+  CARVE_MODE_USER[currentN] = ev.target.value;
+  saveCarveMode();
+  invalidateSpec(currentN);
+  drawShapeEditor();
+  renderDetail(0);
+  renderThumbs();
+});
+
+function shapePointToCell(clientX, clientY){
+  // 「今キャンバスが実際に画面でどれだけの大きさか」を rect から直接使う。
+  // shapeCellSize() を再計算すると、スクロールバーの出現などで描画時と
+  // 値がズレて「クリックした場所と違うマスが選ばれる」原因になるため。
+  const rect = shapeCanvas.getBoundingClientRect();
+  const cellX = rect.width / shapeCols, cellY = rect.height / shapeRows;
+  const x = clientX - rect.left, y = clientY - rect.top;
+  return { gx: Math.floor(x/cellX), gy: Math.floor(y/cellY), x:x, y:y, cell:cellX };
+}
+
+shapeCanvas.addEventListener('pointerdown', function(ev){
+  const p = shapePointToCell(ev.clientX, ev.clientY);
+  const idx = shapeCells.findIndex(c => c.gx===p.gx && c.gy===p.gy);
+  if(idx<0) return;
+
+  if(shapeGroupMode){
+    // ドラッグではなく、クリックで一の位のON/OFFを切り替える
+    const onesDigit = currentN % 10;
+    const already = shapeOnesOrder.findIndex(q => q[0]===p.gx && q[1]===p.gy);
+    if(already>=0){
+      shapeOnesOrder.splice(already, 1);
+    } else if(shapeOnesOrder.length < onesDigit){
+      shapeOnesOrder.push([p.gx, p.gy]);
+    }
+    shapeSaveGroupOverride();
+    return;
+  }
+
+  shapeDrag = { index:idx, curX:p.x, curY:p.y };
+  shapeDragLiveKey = null;
+  shapeCanvas.setPointerCapture(ev.pointerId);
+  drawShapeEditor();
+});
+shapeCanvas.addEventListener('pointermove', function(ev){
+  // ドラッグ中でなくても、今どのマスを指しているかを常にハイライトする
+  const p = shapePointToCell(ev.clientX, ev.clientY);
+  const inRange = p.gx>=0 && p.gy>=0 && p.gx<shapeCols && p.gy<shapeRows;
+  const next = inRange ? p.gx+','+p.gy : null;
+  const changed = next !== shapeHoverKey;
+  shapeHoverKey = next;
+  shapeHover = inRange ? {gx:p.gx, gy:p.gy} : null;
+
+  if(!shapeDrag){ if(changed) drawShapeEditor(); return; }
+  const rect = shapeCanvas.getBoundingClientRect();
+  shapeDrag.curX = ev.clientX - rect.left;
+  shapeDrag.curY = ev.clientY - rect.top;
+  // 「調整」パネルのスライダーと同じく、ドロップを待たずに本体プレビューへも
+  // その場で反映する（マスをまたいだときだけ・入れ替え先マスに実際に移した
+  // 仮の配置で再計算）
+  if(inRange && next !== shapeDragLiveKey){
+    shapeDragLiveKey = next;
+    shapeApplyLiveDragPreview(p.gx, p.gy, shapeDrag.index);
+  }
+  drawShapeEditor();
+});
+shapeCanvas.addEventListener('pointerleave', function(){
+  if(shapeHover){ shapeHover = null; shapeHoverKey = null; drawShapeEditor(); }
+});
+/** ドラッグ中のマスまたぎごとに呼ぶ。shapeCells 自体はまだ確定させず、
+ * SHAPE_OVERRIDE_USER に「今この位置に置いたら」の仮配置を反映して保存・再描画する。
+ * ドロップ時（shapeEndDrag）に shapeCells 側へ正式に確定させる。 */
+function shapeApplyLiveDragPreview(gx, gy, draggedIdx){
+  const preview = shapeCells.slice();
+  const targetIdx = preview.findIndex((c,i) => i!==draggedIdx && c.gx===gx && c.gy===gy);
+  if(targetIdx>=0){
+    const tmp = preview[targetIdx];
+    preview[targetIdx] = preview[draggedIdx];
+    preview[draggedIdx] = tmp;
+  } else {
+    preview[draggedIdx] = { gx:gx, gy:gy };
+  }
+  SHAPE_OVERRIDE_USER[currentN] = preview;
+  saveShape();
+  invalidateSpec(currentN);
+  renderDetail(0);
+  renderThumbs();
+}
+function shapeEndDrag(ev){
+  if(!shapeDrag) return;
+  const p = shapePointToCell(ev.clientX, ev.clientY);
+  const draggedIdx = shapeDrag.index;
+  shapeDrag = null;
+  shapeDragLiveKey = null;
+  if(p.gx>=0 && p.gy>=0 && p.gx<shapeCols && p.gy<shapeRows){
+    const targetIdx = shapeCells.findIndex((c,i) => i!==draggedIdx && c.gx===p.gx && c.gy===p.gy);
+    if(targetIdx>=0){
+      // 入れ替え
+      const tmp = shapeCells[targetIdx];
+      shapeCells[targetIdx] = shapeCells[draggedIdx];
+      shapeCells[draggedIdx] = tmp;
+    } else {
+      shapeCells[draggedIdx] = { gx:p.gx, gy:p.gy };
+    }
+    shapeRebuildBounds();
+  }
+  // ドラッグ中はライブプレビューとして SHAPE_OVERRIDE_USER を仮更新済みなので、
+  // 無効な場所へのドロップでも必ず shapeCells（未変更 or 確定後）の内容で
+  // 上書き保存し直して状態を一致させる
+  SHAPE_OVERRIDE_USER[currentN] = shapeCells.slice();
+  saveShape();
+  invalidateSpec(currentN);
+  renderDetail(0);
+  renderThumbs();
+  drawShapeEditor();
+}
+shapeCanvas.addEventListener('pointerup', shapeEndDrag);
+shapeCanvas.addEventListener('pointercancel', shapeEndDrag);
+
+document.getElementById('shapeGrow').addEventListener('click', function(){
+  shapeExtraMargin++;
+  shapeRebuildBounds();
+  drawShapeEditor();
+});
+document.getElementById('shapeShrink').addEventListener('click', function(){
+  shapeExtraMargin = Math.max(0, shapeExtraMargin-1);
+  shapeRebuildBounds();
+  drawShapeEditor();
+});
+
+document.getElementById('shapeResetOne').addEventListener('click', function(){
+  delete SHAPE_OVERRIDE_USER[currentN];
+  delete CARVE_MODE_USER[currentN];
+  delete GROUP_OVERRIDE_USER[currentN];
+  saveShape(); saveCarveMode(); saveGroupOverride();
+  invalidateSpec(currentN); buildShapeEditor(); renderDetail(0); renderThumbs();
+});
+
+/* ── リサイズ ── */
+let resizeTimer = 0;
+function resizeAll(){
+  renderThumbs();
+  if(currentScreen==='detail') renderDetail(0);
+  if(editOpen) drawShapeEditor();
+}
+window.addEventListener('resize', function(){
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(resizeAll, 120);
+});
+
+/* ── 起動 ── */
+// 調整値・かたち・起点・色分けの復元は共通エンジンの nbLoadUserEdits() が
+// 済ませている（ゲーム側と同じ処理を使う）。ここでは図鑑だけの分を読む。
+loadConfirmed();            // 「確定」マークの復元
+loadMemo();                 // キャラごとのメモの復元
+for(let n=1; n<=100; n++) invalidateSpec(n);   // 念のため：読み込み直後は必ず空のキャッシュから始める
+buildZukan();
+requestAnimationFrame(function(){ renderThumbs(); });
+
+// 別のウィンドウ（もう一つ開いた図鑑など）での変更をその場で取り込む
+onNumberblocksChanged(function(){
+  renderThumbs();
+  if(currentScreen === 'detail'){
+    renderDetail(0);
+    if(editOpen){ buildTuneRows(); buildShapeEditor(); }
+  }
+});
+
+/* ===================== デバッグ用フック ===================== */
+window.__nbg = {
+  spec  : function(n){ return blockSpec(n); },
+  props : function(n){ return numProps(n); },
+  resize: function(){ resizeAll(); return true; },
+  goto  : function(screen, n){
+    if(screen==='detail') openDetail(n||currentN||1);
+    else closeDetail();
+    return currentScreen;
+  },
+  /** 指定の数を単体で1フレーム描画（rAF に依存しない） */
+  // 検証用フック。size を渡したらその値を1マスの1辺として必ず使う
+  // （画面表示の「1マス固定」ロジックとは別扱い）
+  draw  : function(n, size){
+    const bs = (size>0) ? size : 24;
+    const spec = blockSpec(n);
+    const padTop = (n===20 ? 3.6 : 2.2), padBot = 1.5, padX = 1.3;
+    const W = Math.ceil((spec.cols + padX*2) * bs);
+    const H = Math.ceil((spec.rows + padTop + padBot) * bs);
+    const cv = detailCanvas;
+    cv.width = W; cv.height = H;
+    const c = cv.getContext('2d');
+    c.setTransform(1,0,0,1,0,0);
+    c.fillStyle = '#0d1422'; c.fillRect(0,0,W,H);
+    drawNumberblock(c, n, padX*bs, padTop*bs, bs, { spec:spec, t:0, animate:false });
+    return { w:W, h:H, bs:bs, x0:padX*bs, y0:padTop*bs,
+             cols:spec.cols, rows:spec.rows, cells:spec.cells.length };
+  },
+  // 調整モード（検証・自動操作用）
+  tune: {
+    open  : function(){ openEdit(); return true; },
+    close : function(){ closeEdit(); return true; },
+    isOpen: function(){ return editOpen; },
+    get   : function(n){ return getFaceGeom(n||currentN); },
+    set   : function(n, k, v){
+      if(!FACE_GEOM_USER[n]) FACE_GEOM_USER[n] = {};
+      FACE_GEOM_USER[n][k] = v; saveTune();
+      if(editOpen) buildTuneRows();
+      if(currentScreen==='detail') renderDetail(0);
+      return getFaceGeom(n);
+    },
+    user  : function(){ return FACE_GEOM_USER; },
+    exportJson: function(){ return combinedBulkExport(); },
+    resetAll  : function(){ FACE_GEOM_USER = {}; saveTune(); return true; },
+    reload    : function(){ loadTune(); return FACE_GEOM_USER; }
+  },
+  // エンジン本体も検証用に公開
+  cubeSizeFor: cubeSizeFor,
+  blockSpec: blockSpec,
+  drawNumberblock: drawNumberblock,
+  drawNumberblockFit: drawNumberblockFit
+};
+</script>
+</body>
+</html>
