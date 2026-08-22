@@ -660,7 +660,6 @@ const QUIZ_LIMITS = [0, 10000, 5000];   // 0＝制限なし
 let quizLimitIdx = 0;
 let quizStats = { asked:0, correct:0, streak:0, best:0 };
 let quizScored = false;         // この問題の正誤をもう数えたか
-let quizNextAt = 0;             // 次の問題までの待ち時間(ms)
 
 function quizLimitLabel(){
   const ms = QUIZ_LIMITS[quizLimitIdx];
@@ -696,11 +695,10 @@ function quizNewPuzzle(){
   puzzle.noBar = !ms;
   quizStats.asked++;
   quizScored = false;
-  quizNextAt = 0;
 }
 function quizReset(){
   quizStats = { asked:0, correct:0, streak:0, best:0 };
-  puzzle = null; quizNextAt = 0;
+  puzzle = null;
   quizNewPuzzle();
 }
 /** 成績を1問ぶん記録する（一発で当てたときだけ「せいかい」に数える） */
@@ -849,21 +847,16 @@ function loop(ts){
   if(mode==='factor'){
     lerpFactorBlocks(); drawFactorMode(ctx,walkTime);
   } else if(mode==='quiz'){
-    // 解き終わったら（正解／時間切れ）少し間を置いて次の問題へ。ずっと続く
-    if(puzzle){
+    // 解き終わったら（正解演出が終わる／時間切れ）すぐ次の問題へ。ずっと続く。
+    // ここで間を置くと、その間 puzzle.draw() が「正解画面」ではなく問題を
+    // もう一度描いてしまい、同じ問題が出たように見えるので待たせない。
+    if(!puzzle) quizNewPuzzle();
+    else {
       puzzle.update(dt);
       if(puzzle.phase==='timeout') quizScore(false);
-      if(puzzle.phase==='timeout'||puzzle.phase==='done'){
-        if(quizNextAt<=0) quizNextAt = 500;
-        quizNextAt -= dt;
-        if(quizNextAt<=0){ quizNewPuzzle(); }
-        else puzzle.draw(ctx,walkTime);
-      } else {
-        puzzle.draw(ctx,walkTime);
-      }
-    } else {
-      quizNewPuzzle();
+      if(puzzle.phase==='timeout'||puzzle.phase==='done') quizNewPuzzle();
     }
+    puzzle.draw(ctx,walkTime);
     drawQuizScore(ctx);
   } else {
     if(puzzle){
