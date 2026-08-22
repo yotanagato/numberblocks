@@ -37,6 +37,29 @@
     #factor-ui.visible { display:flex; }
     #factor-num { font-size:28px; font-weight:bold; color:white; line-height:1; }
     #factor-range { width:min(340px,90vw); height:28px; cursor:pointer; accent-color:#f80; }
+    /* ドリル（四則計算をひたすら解く）モードの設定パネル */
+    #quiz-ui {
+      display:none; position:fixed;
+      bottom:0; left:0; right:0; height:115px;
+      background:rgba(0,0,0,0.18); z-index:10;
+      padding:10px 16px 12px; flex-direction:column;
+      align-items:center; gap:8px;
+    }
+    #quiz-ui.visible { display:flex; }
+    .quizRow { display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:center; }
+    .quizRow label { color:white; font-size:13px; font-weight:700; }
+    .opBtn {
+      min-width:46px; height:38px; border-radius:9px; cursor:pointer;
+      border:1.5px solid rgba(255,255,255,0.35); background:rgba(50,50,50,0.8);
+      color:#bbb; font-size:19px; font-weight:700;
+    }
+    .opBtn.on { background:rgba(100,160,255,0.95); color:white; border-color:rgba(255,255,255,0.7); }
+    #quiz-max { width:min(240px,52vw); height:28px; cursor:pointer; accent-color:#f80; }
+    #quiz-limit {
+      height:38px; padding:0 12px; border-radius:9px; cursor:pointer;
+      border:1.5px solid rgba(255,255,255,0.35); background:rgba(50,50,50,0.8);
+      color:#e9eefb; font-size:13px; font-weight:700;
+    }
   </style>
 </head>
 <body>
@@ -46,6 +69,19 @@
 <div id="factor-ui">
   <div id="factor-num">12</div>
   <input type="range" id="factor-range" min="1" max="100" value="12">
+</div>
+<div id="quiz-ui">
+  <div class="quizRow">
+    <button class="opBtn on" data-op="+"  title="たしざん">＋</button>
+    <button class="opBtn on" data-op="-"  title="ひきざん">−</button>
+    <button class="opBtn"    data-op="x"  title="かけざん">×</button>
+    <button class="opBtn"    data-op="div" title="わりざん">÷</button>
+  </div>
+  <div class="quizRow">
+    <label>かず 1〜<span id="quiz-max-val">10</span></label>
+    <input type="range" id="quiz-max" min="3" max="100" value="10">
+    <button id="quiz-limit">じかん：なし</button>
+  </div>
 </div>
 <!-- キャラの見た目（かたち・色・顔・手足）は共通エンジンが担当する。
      キャラメイクツール（zukan.html）と同じファイルを読むので、
@@ -71,11 +107,14 @@ const GRAVITY  = 0.4;
 const GH       = 50;
 const TAB_H    = 38;
 const FACTOR_H = 115;
+const QUIZ_H   = 115;
 const MAX_BLOCKS = 30;   // 同時に置けるキャラの数
 
 function isLandscape(){ return sw > sh * 1.2; }
 function getPadH(){ return isLandscape() ? 56 : 110; }
-function calcFloor(){ return sh - GH - (mode==='factor' ? FACTOR_H : getPadH()) - 12; }
+// 画面下に出るパネルの高さ（モードで変わる）
+function bottomPanelH(){ return mode==='factor' ? FACTOR_H : mode==='quiz' ? QUIZ_H : getPadH(); }
+function calcFloor(){ return sh - GH - bottomPanelH() - 12; }
 
 // ─── Colors ───────────────────────────────────────────────────────────────────
 // キャラの配色（DIGIT_COLORS / RAINBOW など）と rgb() は共通エンジン側にある。
@@ -86,7 +125,7 @@ let mode = '+';
 const TAB_DEFS = [
   {label:'+', val:'+'}, {label:'−', val:'-'},
   {label:'×', val:'x'}, {label:'÷', val:'div'},
-  {label:'因数', val:'factor'}
+  {label:'因数', val:'factor'}, {label:'ドリル', val:'quiz'}
 ];
 let tabBtns = [], sizeBtns = [];
 
@@ -283,6 +322,8 @@ class Puzzle {
     if(this.phase!=='countdown') return;
     if(this.eliminated.has(idx)) return;
     if(this.choices[idx]===this.ans){
+      // ドリルでは「一発で当てたか」を成績にする（間違えた後に当てても連続は途切れる）
+      if(mode==='quiz') quizScore(this.eliminated.size===0);
       this.phase='correct'; this.elapsed=0;
       for(let i=0;i<70;i++) this.particles.push(new Particle(sw/2,sh/2));
     } else {
@@ -385,6 +426,7 @@ class Puzzle {
   }
 
   _drawCountdownBar(ctx,px,py,pw,ph){
+    if(this.noBar) return;            // 制限なしのときは残り時間バーを出さない
     const prog=Math.max(0,1-this.elapsed/this.COUNTDOWN);
     const bw=pw-40,bh=12,bx=px+20,by=py+ph-78;
     ctx.fillStyle='#ddd'; ctx.beginPath(); ctx.roundRect(bx,by,bw,bh,6); ctx.fill();
@@ -604,12 +646,111 @@ factorRange.addEventListener('input',()=>{
   buildFactorRows(factorVal); updateFactorTargets(); factorReveal={};
 });
 
+// ─── ドリルモード（四則計算をひたすら解く）──────────────────────────────────
+// キャラ同士をくっつけたときに出るのと同じクイズを、ランダムに出し続ける。
+// 出題そのものは既存の Puzzle クラスをそのまま使う（見た目・操作を揃えるため）。
+const quizUI      = document.getElementById('quiz-ui');
+const quizMaxEl   = document.getElementById('quiz-max');
+const quizMaxVal  = document.getElementById('quiz-max-val');
+const quizLimitEl = document.getElementById('quiz-limit');
+
+let quizOps   = ['+','-'];      // 出題する計算の種類（最低1つ）
+let quizMax   = 10;             // 使う数の上限
+const QUIZ_LIMITS = [0, 10000, 5000];   // 0＝制限なし
+let quizLimitIdx = 0;
+let quizStats = { asked:0, correct:0, streak:0, best:0 };
+let quizScored = false;         // この問題の正誤をもう数えたか
+let quizNextAt = 0;             // 次の問題までの待ち時間(ms)
+
+function quizLimitLabel(){
+  const ms = QUIZ_LIMITS[quizLimitIdx];
+  return 'じかん：' + (ms ? (ms/1000)+'びょう' : 'なし');
+}
+/** 1〜quizMax の範囲で、その計算が成り立つ2つの数を選ぶ */
+function quizPickPair(op){
+  const M = quizMax, r = n => 1 + Math.floor(Math.random()*n);
+  for(let i=0;i<200;i++){
+    if(op==='+'){
+      const a=r(M), b=r(M);
+      if(a+b<=100) return [a,b];
+    } else if(op==='-'){
+      const a=r(M), b=r(M);
+      if(a!==b) return [Math.max(a,b), Math.min(a,b)];
+    } else if(op==='x'){
+      const a=r(M), b=r(M);
+      if(a*b<=100) return [a,b];
+    } else {
+      const b=r(M), q=r(M);          // わり算は「割り切れる」ように積から作る
+      if(b*q<=100 && b>1) return [b*q, b];
+    }
+  }
+  return op==='div' ? [6,3] : [1,1];   // 念のための保険
+}
+function quizNewPuzzle(){
+  const op = quizOps[Math.floor(Math.random()*quizOps.length)];
+  const [a,b] = quizPickPair(op);
+  puzzle = new Puzzle({num:a, x:sw/2}, {num:b, x:sw/2}, op);
+  const ms = QUIZ_LIMITS[quizLimitIdx];
+  if(!ms) puzzle.COUNTDOWN = Infinity;   // 制限なし（あせらせない）
+  else    puzzle.COUNTDOWN = ms;
+  puzzle.noBar = !ms;
+  quizStats.asked++;
+  quizScored = false;
+  quizNextAt = 0;
+}
+function quizReset(){
+  quizStats = { asked:0, correct:0, streak:0, best:0 };
+  puzzle = null; quizNextAt = 0;
+  quizNewPuzzle();
+}
+/** 成績を1問ぶん記録する（一発で当てたときだけ「せいかい」に数える） */
+function quizScore(ok){
+  if(quizScored) return;
+  quizScored = true;
+  if(ok){
+    quizStats.correct++;
+    quizStats.streak++;
+    if(quizStats.streak > quizStats.best) quizStats.best = quizStats.streak;
+  } else {
+    quizStats.streak = 0;
+  }
+}
+function drawQuizScore(ctx){
+  const txt = 'もんだい ' + quizStats.asked + '　せいかい ' + quizStats.correct +
+              '　れんぞく ' + quizStats.streak + '（さいこう ' + quizStats.best + '）';
+  ctx.save();
+  ctx.font='bold 15px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.strokeStyle='white'; ctx.lineWidth=4; ctx.strokeText(txt, sw/2, TAB_H+16);
+  ctx.fillStyle='#111'; ctx.fillText(txt, sw/2, TAB_H+16);
+  ctx.restore();
+}
+
+quizMaxEl.addEventListener('input', ()=>{
+  quizMax = parseInt(quizMaxEl.value,10);
+  quizMaxVal.textContent = String(quizMax);
+});
+quizMaxEl.addEventListener('change', ()=>{ if(mode==='quiz') quizNewPuzzle(); });
+quizLimitEl.addEventListener('click', ()=>{
+  quizLimitIdx = (quizLimitIdx+1) % QUIZ_LIMITS.length;
+  quizLimitEl.textContent = quizLimitLabel();
+  if(mode==='quiz') quizNewPuzzle();
+});
+for(const btn of document.querySelectorAll('.opBtn')){
+  btn.addEventListener('click', ()=>{
+    const op = btn.dataset.op;
+    const i = quizOps.indexOf(op);
+    if(i>=0){ if(quizOps.length>1){ quizOps.splice(i,1); btn.classList.remove('on'); } }  // 最低1つは残す
+    else    { quizOps.push(op); btn.classList.add('on'); }
+    if(mode==='quiz') quizNewPuzzle();
+  });
+}
+
 // ─── Background ───────────────────────────────────────────────────────────────
 function drawBG(ctx){
   const grad=ctx.createLinearGradient(0,0,0,sh);
   grad.addColorStop(0,'#a0d2ff'); grad.addColorStop(1,'#d2eeff');
   ctx.fillStyle=grad; ctx.fillRect(0,0,sw,sh);
-  const groundY=sh-GH-(mode==='factor'?FACTOR_H:getPadH());
+  const groundY=sh-GH-bottomPanelH();
   ctx.fillStyle='rgb(160,230,160)'; ctx.fillRect(0,groundY,sw,GH);
 }
 
@@ -626,6 +767,13 @@ function handleStart(x,y,pid){
   for(const sb of sizeBtns){ if(ptInRect(x,y,sb.x,sb.y,sb.w,sb.h)){ setBlockSize(sb.val); return; } }
   for(const tb of tabBtns){ if(ptInRect(x,y,tb.x,tb.y,tb.w,tb.h)){ setMode(tb.val); return; } }
   if(mode==='factor'){ handleFactorTap(x,y); return; }
+  if(mode==='quiz'){
+    // ドリル中は選択肢のタップだけ受け付ける（キャラの操作や数字パッドは無い）
+    if(puzzle && puzzle.phase==='countdown'){
+      for(const r of puzzle._getChoiceRects()){ if(ptInRect(x,y,r.x,r.y,r.w,r.h)){ puzzle.tapChoice(r.idx); return; } }
+    }
+    return;
+  }
   if(puzzle){
     if(puzzle.phase==='countdown'){
       for(const r of puzzle._getChoiceRects()){ if(ptInRect(x,y,r.x,r.y,r.w,r.h)){ puzzle.tapChoice(r.idx); return; } }
@@ -672,11 +820,14 @@ function handleEnd(x,y,pid){
 
 // ─── Mode switching ───────────────────────────────────────────────────────────
 function setMode(newMode){
-  const wasCalc=mode!=='factor',willBeCalc=newMode!=='factor';
-  if(!wasCalc||!willBeCalc) blocks=[];
+  // 計算モード（＋−×÷）どうしの行き来ならキャラを残す。因数・ドリルを跨ぐときは片付ける
+  const isCalc = m => m!=='factor' && m!=='quiz';
+  if(!isCalc(mode) || !isCalc(newMode)) blocks=[];
   mode=newMode; puzzle=null; dragBlock=null; dragPointers={};
   factorUI.classList.toggle('visible',newMode==='factor');
+  quizUI.classList.toggle('visible',newMode==='quiz');
   if(newMode==='factor'){ buildFactorRows(factorVal); updateFactorTargets(); factorReveal={}; }
+  if(newMode==='quiz'){ quizReset(); }
   updateTargets();
 }
 
@@ -697,6 +848,23 @@ function loop(ts){
   ctx.clearRect(0,0,sw,sh); drawBG(ctx); drawTabsAndUI(ctx);
   if(mode==='factor'){
     lerpFactorBlocks(); drawFactorMode(ctx,walkTime);
+  } else if(mode==='quiz'){
+    // 解き終わったら（正解／時間切れ）少し間を置いて次の問題へ。ずっと続く
+    if(puzzle){
+      puzzle.update(dt);
+      if(puzzle.phase==='timeout') quizScore(false);
+      if(puzzle.phase==='timeout'||puzzle.phase==='done'){
+        if(quizNextAt<=0) quizNextAt = 500;
+        quizNextAt -= dt;
+        if(quizNextAt<=0){ quizNewPuzzle(); }
+        else puzzle.draw(ctx,walkTime);
+      } else {
+        puzzle.draw(ctx,walkTime);
+      }
+    } else {
+      quizNewPuzzle();
+    }
+    drawQuizScore(ctx);
   } else {
     if(puzzle){
       puzzle.update(dt);
@@ -754,7 +922,7 @@ function keySummon(){
 }
 document.addEventListener('keydown', e=>{
   if(e.ctrlKey || e.metaKey || e.altKey) return;   // ブラウザのショートカットは邪魔しない
-  if(mode === 'factor') return;                    // 因数モードはスライダー操作なので対象外
+  if(mode === 'factor' || mode === 'quiz') return;  // 因数・ドリルはキャラを出さないので対象外
   if(puzzle) return;                               // クイズ中は入力を受けない
   if(e.key >= '0' && e.key <= '9'){
     if(keyInput.length < 3) keyInput += e.key;
@@ -820,6 +988,8 @@ onNumberblocksChanged(function(){
 });
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
+quizMaxEl.value = String(quizMax); quizMaxVal.textContent = String(quizMax);
+quizLimitEl.textContent = quizLimitLabel();
 setMode('+');
 requestAnimationFrame(loop);
 </script>
